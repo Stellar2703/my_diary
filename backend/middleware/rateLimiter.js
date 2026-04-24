@@ -6,7 +6,7 @@ import logger from '../config/logger.js';
 // General API rate limiter
 export const generalLimiter = rateLimit({
   store: new RedisStore({
-    client: redis,
+    sendCommand: (cmd, args) => redis.call(cmd, ...args),
     prefix: 'rate-limit:',
     expiry: 15 * 60 // 15 minutes
   }),
@@ -24,7 +24,7 @@ export const generalLimiter = rateLimit({
 // Strict rate limiter for authentication
 export const authLimiter = rateLimit({
   store: new RedisStore({
-    client: redis,
+    sendCommand: (cmd, args) => redis.call(cmd, ...args),
     prefix: 'rate-limit:auth:',
     expiry: 15 * 60
   }),
@@ -40,7 +40,7 @@ export const authLimiter = rateLimit({
 // Strict rate limiter for file uploads
 export const uploadLimiter = rateLimit({
   store: new RedisStore({
-    client: redis,
+    sendCommand: (cmd, args) => redis.call(cmd, ...args),
     prefix: 'rate-limit:upload:',
     expiry: 60 * 60 // 1 hour
   }),
@@ -55,7 +55,7 @@ export const uploadLimiter = rateLimit({
 // Moderate rate limiter for create operations
 export const createLimiter = rateLimit({
   store: new RedisStore({
-    client: redis,
+    sendCommand: (cmd, args) => redis.call(cmd, ...args),
     prefix: 'rate-limit:create:',
     expiry: 60 * 60
   }),
@@ -70,7 +70,7 @@ export const createLimiter = rateLimit({
 // Looser rate limiter for read operations
 export const readLimiter = rateLimit({
   store: new RedisStore({
-    client: redis,
+    sendCommand: (cmd, args) => redis.call(cmd, ...args),
     prefix: 'rate-limit:read:',
     expiry: 5 * 60
   }),
@@ -86,7 +86,7 @@ export const readLimiter = rateLimit({
 export const userOperationLimiter = (windowMs = 60 * 1000, max = 30) => {
   return rateLimit({
     store: new RedisStore({
-      client: redis,
+      sendCommand: (cmd, args) => redis.call(cmd, ...args),
       prefix: 'rate-limit:user-op:',
       expiry: Math.ceil(windowMs / 1000)
     }),
