@@ -61,7 +61,7 @@ export default function NotificationBell() {
         setNotifications(response.data as Notification[]);
       }
     } catch (error) {
-      console.error('Failed to fetch notifications');
+      
     } finally {
       setLoading(false);
     }
@@ -74,7 +74,7 @@ export default function NotificationBell() {
         setUnreadCount((response.data as any).count);
       }
     } catch (error) {
-      console.error('Failed to fetch unread count');
+      
     }
   };
 

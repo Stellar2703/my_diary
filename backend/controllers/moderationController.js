@@ -1,8 +1,8 @@
-import db from '../config/database.js';
+import mongoose from 'mongoose';
+import { Report, Ban, ModerationLog, Post, Comment, User } from '../models/index.js';
 
 // Create report
 export const createReport = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { targetType, targetId, reason, description } = req.body;
     const userId = req.user.id;
@@ -12,180 +12,167 @@ export const createReport = async (req, res) => {
       return res.status(400).json({ error: 'Invalid target type' });
     }
 
-    // Check if already reported
-    const [existing] = await connection.query(
-      'SELECT id FROM reports WHERE reporter_id = ? AND target_type = ? AND target_id = ? AND status = "pending"',
-      [userId, targetType, targetId]
-    );
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(targetId)) {
+      return res.status(400).json({ error: 'Invalid target ID' });
+    }
 
-    if (existing.length > 0) {
+    // Check if already reported
+    const existing = await Report.findOne({
+      reporterId: userId,
+      targetType,
+      targetId,
+      status: 'pending'
+    });
+
+    if (existing) {
       return res.status(400).json({ error: 'You have already reported this content' });
     }
 
-    await connection.query(
-      'INSERT INTO reports (reporter_id, target_type, target_id, reason, description) VALUES (?, ?, ?, ?, ?)',
-      [userId, targetType, targetId, reason, description]
-    );
-
-    connection.release();
+    await Report.create({
+      reporterId: userId,
+      targetType,
+      targetId,
+      reason,
+      description
+    });
 
     res.json({ success: true, message: 'Report submitted successfully' });
   } catch (error) {
-    connection.release();
-    console.error('Create report error:', error);
+    
     res.status(500).json({ error: 'Failed to create report' });
   }
 };
 
 // Get reports (admin only)
 export const getReports = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { status = 'pending', targetType, page = 1, limit = 20 } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    let query = `
-      SELECT 
-        r.*,
-        reporter.username as reporter_username, reporter.name as reporter_name,
-        reviewer.username as reviewer_username, reviewer.name as reviewer_name
-      FROM reports r
-      JOIN users reporter ON r.reporter_id = reporter.id
-      LEFT JOIN users reviewer ON r.reviewed_by = reviewer.id
-      WHERE 1=1
-    `;
-
-    const params = [];
+    const query = {};
 
     if (status !== 'all') {
-      query += ' AND r.status = ?';
-      params.push(status);
+      query.status = status;
     }
 
     if (targetType) {
-      query += ' AND r.target_type = ?';
-      params.push(targetType);
+      query.targetType = targetType;
     }
 
-    query += ' ORDER BY r.created_at DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), offset);
+    const reports = await Report.find(query)
+      .populate('reporterId', 'username name')
+      .populate('reviewedBy', 'username name')
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(skip)
+      .lean();
 
-    const [reports] = await connection.query(query, params);
+    // Format the response to match expected structure
+    const formattedReports = reports.map(r => ({
+      ...r,
+      reporter_username: r.reporterId?.username,
+      reporter_name: r.reporterId?.name,
+      reviewer_username: r.reviewedBy?.username,
+      reviewer_name: r.reviewedBy?.name
+    }));
 
-    connection.release();
-
-    res.json({ success: true, data: reports });
+    res.json({ success: true, data: formattedReports });
   } catch (error) {
-    connection.release();
-    console.error('Get reports error:', error);
+    
     res.status(500).json({ error: 'Failed to get reports' });
   }
 };
 
 // Review report (admin only)
 export const reviewReport = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { reportId } = req.params;
     const { action, notes } = req.body; // dismiss, remove_content, ban_user
     const userId = req.user.id;
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(reportId)) {
+      return res.status(400).json({ error: 'Invalid report ID' });
+    }
 
     const validActions = ['dismiss', 'remove_content', 'ban_user'];
     if (!validActions.includes(action)) {
       return res.status(400).json({ error: 'Invalid action' });
     }
 
-    const [reports] = await connection.query(
-      'SELECT * FROM reports WHERE id = ?',
-      [reportId]
-    );
-
-    if (reports.length === 0) {
+    const report = await Report.findById(reportId);
+    if (!report) {
       return res.status(404).json({ error: 'Report not found' });
     }
 
-    const report = reports[0];
-
-    await connection.beginTransaction();
-
     // Update report status
-    await connection.query(
-      'UPDATE reports SET status = ?, reviewed_by = ?, reviewed_at = NOW(), action_taken = ?, notes = ? WHERE id = ?',
-      [action === 'dismiss' ? 'dismissed' : 'resolved', userId, action, notes || null, reportId]
-    );
+    report.status = action === 'dismiss' ? 'dismissed' : 'resolved';
+    report.reviewedBy = userId;
+    report.reviewedAt = new Date();
+    report.actionTaken = action;
+    report.notes = notes || null;
+    await report.save();
 
     // Take action based on report type
     if (action === 'remove_content') {
-      if (report.target_type === 'post') {
-        await connection.query(
-          'UPDATE posts SET is_active = FALSE WHERE id = ?',
-          [report.target_id]
-        );
-      } else if (report.target_type === 'comment') {
-        await connection.query(
-          'UPDATE comments SET is_active = FALSE WHERE id = ?',
-          [report.target_id]
-        );
+      if (report.targetType === 'post') {
+        await Post.findByIdAndUpdate(report.targetId, { isActive: false });
+      } else if (report.targetType === 'comment') {
+        await Comment.findByIdAndUpdate(report.targetId, { isActive: false });
       }
     } else if (action === 'ban_user') {
       let targetUserId;
-      if (report.target_type === 'user') {
-        targetUserId = report.target_id;
-      } else if (report.target_type === 'post') {
-        const [post] = await connection.query(
-          'SELECT user_id FROM posts WHERE id = ?',
-          [report.target_id]
-        );
-        targetUserId = post[0]?.user_id;
-      } else if (report.target_type === 'comment') {
-        const [comment] = await connection.query(
-          'SELECT user_id FROM comments WHERE id = ?',
-          [report.target_id]
-        );
-        targetUserId = comment[0]?.user_id;
+      if (report.targetType === 'user') {
+        targetUserId = report.targetId;
+      } else if (report.targetType === 'post') {
+        const post = await Post.findById(report.targetId, 'userId');
+        targetUserId = post?.userId;
+      } else if (report.targetType === 'comment') {
+        const comment = await Comment.findById(report.targetId, 'userId');
+        targetUserId = comment?.userId;
       }
 
       if (targetUserId) {
-        await connection.query(
-          'INSERT INTO user_bans (user_id, banned_by, reason) VALUES (?, ?, ?)',
-          [targetUserId, userId, notes || 'Violated community guidelines']
-        );
+        await Ban.create({
+          userId: targetUserId,
+          bannedBy: userId,
+          reason: notes || 'Violated community guidelines'
+        });
       }
     }
 
     // Log moderation action
-    await connection.query(
-      'INSERT INTO moderation_logs (moderator_id, action, target_type, target_id, reason) VALUES (?, ?, ?, ?, ?)',
-      [userId, action, report.target_type, report.target_id, notes || 'Report review']
-    );
-
-    await connection.commit();
-    connection.release();
+    await ModerationLog.create({
+      moderatorId: userId,
+      action,
+      targetType: report.targetType,
+      targetId: report.targetId,
+      reason: notes || 'Report review'
+    });
 
     res.json({ success: true, message: 'Report reviewed successfully' });
   } catch (error) {
-    await connection.rollback();
-    connection.release();
-    console.error('Review report error:', error);
+    
     res.status(500).json({ error: 'Failed to review report' });
   }
 };
 
 // Ban user (admin only)
 export const banUser = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { userId } = req.params;
     const { reason, duration } = req.body; // duration in days, null for permanent
     const bannedBy = req.user.id;
 
-    // Check if already banned
-    const [existing] = await connection.query(
-      'SELECT id FROM user_bans WHERE user_id = ? AND is_active = TRUE',
-      [userId]
-    );
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
 
-    if (existing.length > 0) {
+    // Check if already banned
+    const existing = await Ban.findOne({ userId, isActive: true });
+    if (existing) {
       return res.status(400).json({ error: 'User is already banned' });
     }
 
@@ -195,79 +182,84 @@ export const banUser = async (req, res) => {
       expiresAt.setDate(expiresAt.getDate() + parseInt(duration));
     }
 
-    await connection.query(
-      'INSERT INTO user_bans (user_id, banned_by, reason, expires_at) VALUES (?, ?, ?, ?)',
-      [userId, bannedBy, reason, expiresAt]
-    );
+    await Ban.create({
+      userId,
+      bannedBy,
+      reason,
+      expiresAt
+    });
 
     // Log action
-    await connection.query(
-      'INSERT INTO moderation_logs (moderator_id, action, target_type, target_id, reason) VALUES (?, ?, ?, ?, ?)',
-      [bannedBy, 'ban_user', 'user', userId, reason]
-    );
-
-    connection.release();
+    await ModerationLog.create({
+      moderatorId: bannedBy,
+      action: 'ban_user',
+      targetType: 'user',
+      targetId: userId,
+      reason
+    });
 
     res.json({ success: true, message: 'User banned successfully' });
   } catch (error) {
-    connection.release();
-    console.error('Ban user error:', error);
+    
     res.status(500).json({ error: 'Failed to ban user' });
   }
 };
 
 // Unban user (admin only)
 export const unbanUser = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { userId } = req.params;
     const unbannedBy = req.user.id;
 
-    await connection.query(
-      'UPDATE user_bans SET is_active = FALSE WHERE user_id = ? AND is_active = TRUE',
-      [userId]
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
+
+    await Ban.updateMany(
+      { userId, isActive: true },
+      { isActive: false }
     );
 
     // Log action
-    await connection.query(
-      'INSERT INTO moderation_logs (moderator_id, action, target_type, target_id, reason) VALUES (?, ?, ?, ?, ?)',
-      [unbannedBy, 'unban_user', 'user', userId, 'User unbanned']
-    );
-
-    connection.release();
+    await ModerationLog.create({
+      moderatorId: unbannedBy,
+      action: 'unban_user',
+      targetType: 'user',
+      targetId: userId,
+      reason: 'User unbanned'
+    });
 
     res.json({ success: true, message: 'User unbanned successfully' });
   } catch (error) {
-    connection.release();
-    console.error('Unban user error:', error);
+    
     res.status(500).json({ error: 'Failed to unban user' });
   }
 };
 
 // Get moderation logs (admin only)
 export const getModerationLogs = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { page = 1, limit = 50 } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    const [logs] = await connection.query(
-      `SELECT 
-        ml.*,
-        u.username as moderator_username, u.name as moderator_name
-       FROM moderation_logs ml
-       JOIN users u ON ml.moderator_id = u.id
-       ORDER BY ml.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [parseInt(limit), offset]
-    );
+    const logs = await ModerationLog.find()
+      .populate('moderatorId', 'username name')
+      .sort({ createdAt: -1 })
+      .limit(parseInt(limit))
+      .skip(skip)
+      .lean();
 
-    connection.release();
+    // Format the response to match expected structure
+    const formattedLogs = logs.map(log => ({
+      ...log,
+      moderator_username: log.moderatorId?.username,
+      moderator_name: log.moderatorId?.name
+    }));
 
-    res.json({ success: true, data: logs });
+    res.json({ success: true, data: formattedLogs });
   } catch (error) {
-    connection.release();
-    console.error('Get moderation logs error:', error);
+    
     res.status(500).json({ error: 'Failed to get logs' });
   }
 };

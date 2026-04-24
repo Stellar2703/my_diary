@@ -11,17 +11,23 @@ npm install
 
 ### 2. Setup Database
 ```bash
-# Login to MySQL
-mysql -u root -p
+# Make sure MongoDB is running
+# Start MongoDB service (if not running)
+mongod
 
-# Run schema
-source database/schema.sql
+# Seed the database with initial data
+npm run seed
 ```
 
 ### 3. Configure Environment
 ```bash
-cp .env.example .env
-# Edit .env with your settings
+# Create .env file with your settings
+# Example:
+PORT=5000
+MONGODB_URI=mongodb://localhost:27017/peekhour
+JWT_SECRET=your_secret_key_here
+JWT_EXPIRE=7d
+FRONTEND_URL=http://localhost:3000
 ```
 
 ### 4. Start Server
@@ -37,13 +43,9 @@ npm start
 
 Required variables in `.env`:
 - `PORT` - Server port (default: 5000)
-- `DB_HOST` - MySQL host
-- `DB_PORT` - MySQL port
-- `DB_USER` - MySQL username
-- `DB_PASSWORD` - MySQL password
-- `DB_NAME` - Database name
+- `MONGODB_URI` - MongoDB connection string (default: mongodb://localhost:27017/peekhour)
 - `JWT_SECRET` - Secret for JWT tokens
-- `JWT_EXPIRE` - Token expiration
+- `JWT_EXPIRE` - Token expiration (default: 7d)
 - `FRONTEND_URL` - Frontend URL for CORS
 
 ## API Documentation
@@ -56,7 +58,8 @@ See main README.md for complete API endpoint documentation.
 - `controllers/` - Business logic
 - `middleware/` - Authentication, validation, upload
 - `routes/` - API routes
-- `database/` - Schema and migrations
+- `models/` - MongoDB schemas
+- `database/` - Seed scripts
 - `uploads/` - User uploaded files
 
 ## Security
@@ -64,18 +67,20 @@ See main README.md for complete API endpoint documentation.
 - JWT authentication
 - bcrypt password hashing
 - Input validation
-- SQL injection protection
+- NoSQL injection protection
 - File upload restrictions
 - CORS configuration
 
 ## Database
 
-MySQL 8.0+ with the following main tables:
+MongoDB 4.4+ with the following main collections:
 - users
 - posts
 - departments
 - comments
-- post_likes
-- post_shares
+- notifications
+- stories
+- messages
+- conversations
 
-See `database/schema.sql` for complete schema.
+See `models/` directory for complete schemas.

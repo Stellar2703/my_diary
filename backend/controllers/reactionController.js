@@ -1,12 +1,17 @@
-import db from '../config/database.js';
+import mongoose from 'mongoose';
+import { Post, Comment, Notification } from '../models/index.js';
 
 // Toggle reaction on a post
 export const togglePostReaction = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { id } = req.params;
     const { reactionType = 'like' } = req.body;
     const userId = req.user.id;
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid post ID' });
+    }
 
     // Validate reaction type
     const validReactions = ['like', 'love', 'wow', 'sad', 'angry', 'celebrate'];
@@ -15,36 +20,29 @@ export const togglePostReaction = async (req, res) => {
     }
 
     // Check if post exists
-    const [posts] = await connection.query('SELECT user_id FROM posts WHERE id = ?', [id]);
-    if (posts.length === 0) {
+    const post = await Post.findById(id);
+    if (!post) {
       return res.status(404).json({ error: 'Post not found' });
     }
 
-    const postOwnerId = posts[0].user_id;
-
     // Prevent self-reactions
-    if (parseInt(postOwnerId) === userId) {
+    if (post.userId.toString() === userId) {
       return res.status(400).json({ error: 'Cannot react to your own post' });
     }
 
-    await connection.beginTransaction();
-
     // Check if user already reacted
-    const [existing] = await connection.query(
-      'SELECT id, reaction_type FROM post_reactions WHERE post_id = ? AND user_id = ?',
-      [id, userId]
+    const existingReactionIndex = post.reactions.findIndex(
+      r => r.userId.toString() === userId
     );
 
-    if (existing.length > 0) {
-      if (existing[0].reaction_type === reactionType) {
+    if (existingReactionIndex !== -1) {
+      const existingReaction = post.reactions[existingReactionIndex];
+      
+      if (existingReaction.reactionType === reactionType) {
         // Remove reaction if same type
-        await connection.query(
-          'DELETE FROM post_reactions WHERE post_id = ? AND user_id = ?',
-          [id, userId]
-        );
-
-        await connection.commit();
-        connection.release();
+        await Post.findByIdAndUpdate(id, {
+          $pull: { reactions: { userId } }
+        });
 
         return res.json({
           success: true,
@@ -53,20 +51,26 @@ export const togglePostReaction = async (req, res) => {
         });
       } else {
         // Update to new reaction type
-        await connection.query(
-          'UPDATE post_reactions SET reaction_type = ?, created_at = NOW() WHERE post_id = ? AND user_id = ?',
-          [reactionType, id, userId]
-        );
+        await Post.findByIdAndUpdate(id, {
+          $pull: { reactions: { userId } }
+        });
+        await Post.findByIdAndUpdate(id, {
+          $push: { reactions: { userId, reactionType, createdAt: new Date() } }
+        });
 
         // Create notification for new reaction
-        await connection.query(
-          `INSERT INTO notifications (user_id, type, notification_type, content, post_id, from_user_id, data) 
-           VALUES (?, 'reaction', 'like', 'reacted to your post', ?, ?, JSON_OBJECT('action', 'reaction', 'reactionType', ?))`,
-          [postOwnerId, id, userId, reactionType]
-        );
-
-        await connection.commit();
-        connection.release();
+        await Notification.create({
+          userId: post.userId,
+          type: 'reaction',
+          notificationType: 'like',
+          content: 'reacted to your post',
+          postId: id,
+          fromUserId: userId,
+          data: {
+            action: 'reaction',
+            reactionType
+          }
+        });
 
         return res.json({
           success: true,
@@ -76,20 +80,23 @@ export const togglePostReaction = async (req, res) => {
       }
     } else {
       // Add new reaction
-      await connection.query(
-        'INSERT INTO post_reactions (post_id, user_id, reaction_type) VALUES (?, ?, ?)',
-        [id, userId, reactionType]
-      );
+      await Post.findByIdAndUpdate(id, {
+        $push: { reactions: { userId, reactionType, createdAt: new Date() } }
+      });
 
       // Create notification
-      await connection.query(
-        `INSERT INTO notifications (user_id, type, notification_type, content, post_id, from_user_id, data) 
-         VALUES (?, 'reaction', 'like', 'reacted to your post', ?, ?, JSON_OBJECT('action', 'reaction', 'reactionType', ?))`,
-        [postOwnerId, id, userId, reactionType]
-      );
-
-      await connection.commit();
-      connection.release();
+      await Notification.create({
+        userId: post.userId,
+        type: 'reaction',
+        notificationType: 'like',
+        content: 'reacted to your post',
+        postId: id,
+        fromUserId: userId,
+        data: {
+          action: 'reaction',
+          reactionType
+        }
+      });
 
       return res.json({
         success: true,
@@ -98,9 +105,7 @@ export const togglePostReaction = async (req, res) => {
       });
     }
   } catch (error) {
-    await connection.rollback();
-    connection.release();
-    console.error('Toggle reaction error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to toggle reaction',
@@ -111,51 +116,56 @@ export const togglePostReaction = async (req, res) => {
 
 // Get reactions for a post
 export const getPostReactions = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { id } = req.params;
 
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid post ID' });
+    }
+
+    const post = await Post.findById(id).populate('reactions.userId', 'id username name avatar');
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
     // Get reaction counts by type
-    const [reactions] = await connection.query(
-      `SELECT 
-        reaction_type,
-        COUNT(*) as count
-       FROM post_reactions
-       WHERE post_id = ?
-       GROUP BY reaction_type`,
-      [id]
-    );
+    const reactionCounts = post.reactions.reduce((acc, reaction) => {
+      const type = reaction.reactionType;
+      if (!acc[type]) {
+        acc[type] = { reaction_type: type, count: 0 };
+      }
+      acc[type].count++;
+      return acc;
+    }, {});
 
-    // Get users who reacted (limit to recent 20 per type)
-    const [recentReactions] = await connection.query(
-      `SELECT 
-        pr.reaction_type,
-        u.id, u.username, u.name, u.avatar,
-        pr.created_at
-       FROM post_reactions pr
-       JOIN users u ON pr.user_id = u.id
-       WHERE pr.post_id = ?
-       ORDER BY pr.created_at DESC
-       LIMIT 20`,
-      [id]
-    );
+    const reactions = Object.values(reactionCounts);
 
-    // Get total count
-    const totalCount = reactions.reduce((sum, r) => sum + parseInt(r.count), 0);
+    // Format recent reactions (limit to 20 most recent)
+    const recentReactions = post.reactions
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .slice(0, 20)
+      .map(r => ({
+        reaction_type: r.reactionType,
+        id: r.userId._id,
+        username: r.userId.username,
+        name: r.userId.name,
+        avatar: r.userId.avatar,
+        created_at: r.createdAt
+      }));
 
-    connection.release();
+    const totalCount = post.reactions.length;
 
     res.json({
       success: true,
       data: {
-        reactions: reactions,
-        recentReactions: recentReactions,
-        totalCount: totalCount
+        reactions,
+        recentReactions,
+        totalCount
       }
     });
   } catch (error) {
-    connection.release();
-    console.error('Get post reactions error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to get reactions',
@@ -166,11 +176,15 @@ export const getPostReactions = async (req, res) => {
 
 // Toggle reaction on a comment
 export const toggleCommentReaction = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { id } = req.params;
     const { reactionType = 'like' } = req.body;
     const userId = req.user.id;
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid comment ID' });
+    }
 
     // Validate reaction type
     const validReactions = ['like', 'love', 'wow', 'sad', 'angry'];
@@ -179,36 +193,29 @@ export const toggleCommentReaction = async (req, res) => {
     }
 
     // Check if comment exists
-    const [comments] = await connection.query('SELECT user_id FROM comments WHERE id = ?', [id]);
-    if (comments.length === 0) {
+    const comment = await Comment.findById(id);
+    if (!comment) {
       return res.status(404).json({ error: 'Comment not found' });
     }
 
-    const commentOwnerId = comments[0].user_id;
-
     // Prevent self-reactions
-    if (parseInt(commentOwnerId) === userId) {
+    if (comment.userId.toString() === userId) {
       return res.status(400).json({ error: 'Cannot react to your own comment' });
     }
 
-    await connection.beginTransaction();
-
     // Check if user already reacted
-    const [existing] = await connection.query(
-      'SELECT id, reaction_type FROM comment_reactions WHERE comment_id = ? AND user_id = ?',
-      [id, userId]
+    const existingReactionIndex = comment.reactions.findIndex(
+      r => r.userId.toString() === userId
     );
 
-    if (existing.length > 0) {
-      if (existing[0].reaction_type === reactionType) {
+    if (existingReactionIndex !== -1) {
+      const existingReaction = comment.reactions[existingReactionIndex];
+      
+      if (existingReaction.reactionType === reactionType) {
         // Remove reaction
-        await connection.query(
-          'DELETE FROM comment_reactions WHERE comment_id = ? AND user_id = ?',
-          [id, userId]
-        );
-
-        await connection.commit();
-        connection.release();
+        await Comment.findByIdAndUpdate(id, {
+          $pull: { reactions: { userId } }
+        });
 
         return res.json({
           success: true,
@@ -217,13 +224,12 @@ export const toggleCommentReaction = async (req, res) => {
         });
       } else {
         // Update reaction
-        await connection.query(
-          'UPDATE comment_reactions SET reaction_type = ?, created_at = NOW() WHERE comment_id = ? AND user_id = ?',
-          [reactionType, id, userId]
-        );
-
-        await connection.commit();
-        connection.release();
+        await Comment.findByIdAndUpdate(id, {
+          $pull: { reactions: { userId } }
+        });
+        await Comment.findByIdAndUpdate(id, {
+          $push: { reactions: { userId, reactionType, createdAt: new Date() } }
+        });
 
         return res.json({
           success: true,
@@ -233,13 +239,9 @@ export const toggleCommentReaction = async (req, res) => {
       }
     } else {
       // Add new reaction
-      await connection.query(
-        'INSERT INTO comment_reactions (comment_id, user_id, reaction_type) VALUES (?, ?, ?)',
-        [id, userId, reactionType]
-      );
-
-      await connection.commit();
-      connection.release();
+      await Comment.findByIdAndUpdate(id, {
+        $push: { reactions: { userId, reactionType, createdAt: new Date() } }
+      });
 
       return res.json({
         success: true,
@@ -248,9 +250,7 @@ export const toggleCommentReaction = async (req, res) => {
       });
     }
   } catch (error) {
-    await connection.rollback();
-    connection.release();
-    console.error('Toggle comment reaction error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to toggle reaction',
@@ -261,34 +261,41 @@ export const toggleCommentReaction = async (req, res) => {
 
 // Get reactions for a comment
 export const getCommentReactions = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { id } = req.params;
 
-    const [reactions] = await connection.query(
-      `SELECT 
-        reaction_type,
-        COUNT(*) as count
-       FROM comment_reactions
-       WHERE comment_id = ?
-       GROUP BY reaction_type`,
-      [id]
-    );
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid comment ID' });
+    }
 
-    const totalCount = reactions.reduce((sum, r) => sum + parseInt(r.count), 0);
+    const comment = await Comment.findById(id);
+    if (!comment) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
 
-    connection.release();
+    // Get reaction counts by type
+    const reactionCounts = comment.reactions.reduce((acc, reaction) => {
+      const type = reaction.reactionType;
+      if (!acc[type]) {
+        acc[type] = { reaction_type: type, count: 0 };
+      }
+      acc[type].count++;
+      return acc;
+    }, {});
+
+    const reactions = Object.values(reactionCounts);
+    const totalCount = comment.reactions.length;
 
     res.json({
       success: true,
       data: {
-        reactions: reactions,
-        totalCount: totalCount
+        reactions,
+        totalCount
       }
     });
   } catch (error) {
-    connection.release();
-    console.error('Get comment reactions error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to get reactions',

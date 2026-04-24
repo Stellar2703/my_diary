@@ -1,4 +1,5 @@
-import db from '../config/database.js';
+import { Comment, Post, User } from '../models/index.js';
+import mongoose from 'mongoose';
 
 // Add comment to post
 export const addComment = async (req, res) => {
@@ -7,13 +8,17 @@ export const addComment = async (req, res) => {
     const { content, isBold = false, isItalic = false } = req.body;
     const userId = req.user.id;
 
-    // Check if post exists
-    const [posts] = await db.query(
-      'SELECT id FROM posts WHERE id = ? AND is_active = TRUE',
-      [postId]
-    );
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid post ID'
+      });
+    }
 
-    if (posts.length === 0) {
+    // Check if post exists
+    const post = await Post.findOne({ _id: postId, isActive: true });
+
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: 'Post not found'
@@ -21,21 +26,24 @@ export const addComment = async (req, res) => {
     }
 
     // Insert comment
-    const [result] = await db.query(
-      `INSERT INTO comments (post_id, user_id, content, is_bold, is_italic) 
-       VALUES (?, ?, ?, ?, ?)`,
-      [postId, userId, content, isBold, isItalic]
-    );
+    const comment = await Comment.create({
+      postId,
+      userId,
+      content,
+      isBold,
+      isItalic,
+      isActive: true
+    });
 
     res.status(201).json({
       success: true,
       message: 'Comment added successfully',
       data: {
-        commentId: result.insertId
+        commentId: comment._id
       }
     });
   } catch (error) {
-    console.error('Add comment error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to add comment',
@@ -49,41 +57,50 @@ export const getComments = async (req, res) => {
   try {
     const { postId } = req.params;
     const { page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    const [comments] = await db.query(
-      `SELECT 
-        c.*,
-        u.name as author_name,
-        u.username as author_username,
-        u.profile_avatar as author_avatar
-       FROM comments c
-       INNER JOIN users u ON c.user_id = u.id
-       WHERE c.post_id = ? AND c.is_active = TRUE
-       ORDER BY c.created_at ASC
-       LIMIT ? OFFSET ?`,
-      [postId, parseInt(limit), offset]
-    );
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid post ID'
+      });
+    }
 
-    const [countResult] = await db.query(
-      'SELECT COUNT(*) as total FROM comments WHERE post_id = ? AND is_active = TRUE',
-      [postId]
-    );
+    const comments = await Comment.find({ postId, isActive: true })
+      .populate('userId', 'name username profileAvatar')
+      .sort({ createdAt: 1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
+
+    const total = await Comment.countDocuments({ postId, isActive: true });
+
+    const enrichedComments = comments.map(c => ({
+      ...c,
+      id: c._id.toString(),
+      author_name: c.userId?.name,
+      author_username: c.userId?.username,
+      author_avatar: c.userId?.profileAvatar,
+      created_at: c.createdAt,
+      updated_at: c.updatedAt
+    }));
 
     res.json({
       success: true,
       data: {
-        comments,
+        comments: enrichedComments,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: countResult[0].total,
-          totalPages: Math.ceil(countResult[0].total / limit)
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages: Math.ceil(total / limitNum)
         }
       }
     });
   } catch (error) {
-    console.error('Get comments error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch comments',
@@ -99,20 +116,23 @@ export const updateComment = async (req, res) => {
     const { content } = req.body;
     const userId = req.user.id;
 
-    // Check if comment belongs to user
-    const [comments] = await db.query(
-      'SELECT user_id FROM comments WHERE id = ?',
-      [id]
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid comment ID'
+      });
+    }
 
-    if (comments.length === 0) {
+    const comment = await Comment.findById(id);
+
+    if (!comment) {
       return res.status(404).json({
         success: false,
         message: 'Comment not found'
       });
     }
 
-    if (comments[0].user_id !== userId) {
+    if (comment.userId.toString() !== userId) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to update this comment'
@@ -120,17 +140,14 @@ export const updateComment = async (req, res) => {
     }
 
     // Update comment
-    await db.query(
-      'UPDATE comments SET content = ? WHERE id = ?',
-      [content, id]
-    );
+    await Comment.findByIdAndUpdate(id, { content });
 
     res.json({
       success: true,
       message: 'Comment updated successfully'
     });
   } catch (error) {
-    console.error('Update comment error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to update comment',
@@ -145,20 +162,23 @@ export const deleteComment = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    // Check if comment belongs to user
-    const [comments] = await db.query(
-      'SELECT user_id FROM comments WHERE id = ?',
-      [id]
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid comment ID'
+      });
+    }
 
-    if (comments.length === 0) {
+    const comment = await Comment.findById(id);
+
+    if (!comment) {
       return res.status(404).json({
         success: false,
         message: 'Comment not found'
       });
     }
 
-    if (comments[0].user_id !== userId) {
+    if (comment.userId.toString() !== userId) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to delete this comment'
@@ -166,17 +186,14 @@ export const deleteComment = async (req, res) => {
     }
 
     // Soft delete
-    await db.query(
-      'UPDATE comments SET is_active = FALSE WHERE id = ?',
-      [id]
-    );
+    await Comment.findByIdAndUpdate(id, { isActive: false });
 
     res.json({
       success: true,
       message: 'Comment deleted successfully'
     });
   } catch (error) {
-    console.error('Delete comment error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to delete comment',

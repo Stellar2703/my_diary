@@ -1,162 +1,152 @@
-import db from '../config/database.js';
+import { Notification, User } from '../models/index.js';
+import mongoose from 'mongoose';
 
 // Create notification
 const createNotification = async (userId, type, content, relatedId = null, actorId = null) => {
-  const connection = await db.getConnection();
   try {
-    await connection.query(
-      `INSERT INTO notifications (user_id, type, content, related_id, actor_id) 
-       VALUES (?, ?, ?, ?, ?)`,
-      [userId, type, content, relatedId, actorId]
-    );
-    connection.release();
+    await Notification.create({
+      userId,
+      type,
+      content,
+      message: content,
+      fromUserId: actorId,
+      relatedId,
+      isRead: false,
+      isActive: true
+    });
   } catch (error) {
-    connection.release();
-    console.error('Create notification error:', error);
+    
   }
 };
 
 // Get user notifications
 export const getNotifications = async (req, res) => {
-  const connection = await db.getConnection();
   try {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     const { type, unreadOnly = 'false', page = 1, limit = 20 } = req.query;
 
-    let query = `
-      SELECT 
-        n.*,
-        u.username as actor_username, u.name as actor_name, u.avatar as actor_avatar
-      FROM notifications n
-      LEFT JOIN users u ON n.actor_id = u.id
-      WHERE n.user_id = ?
-    `;
-
-    const params = [userId];
+    const query = { userId };
 
     if (type) {
-      query += ' AND n.type = ?';
-      params.push(type);
+      query.type = type;
     }
 
     if (unreadOnly === 'true') {
-      query += ' AND n.is_read = FALSE';
+      query.isRead = false;
     }
 
-    query += ' ORDER BY n.created_at DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), (parseInt(page) - 1) * parseInt(limit));
+    const notifications = await Notification.find(query)
+      .populate('fromUserId', 'username name profileAvatar')
+      .sort({ createdAt: -1 })
+      .skip((parseInt(page) - 1) * parseInt(limit))
+      .limit(parseInt(limit))
+      .lean();
 
-    const [notifications] = await connection.query(query, params);
+    // Enrich data
+    const enriched = notifications.map(n => ({
+      ...n,
+      id: n._id,
+      actor_username: n.fromUserId?.username,
+      actor_name: n.fromUserId?.name,
+      actor_avatar: n.fromUserId?.profileAvatar,
+      is_read: n.isRead,
+      created_at: n.createdAt
+    }));
 
-    connection.release();
-
-    res.json({ success: true, data: notifications });
+    res.json({ success: true, data: enriched });
   } catch (error) {
-    connection.release();
-    console.error('Get notifications error:', error);
+    
     res.status(500).json({ error: 'Failed to get notifications' });
   }
 };
 
 // Mark notification as read
 export const markAsRead = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { notificationId } = req.params;
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
 
-    await connection.query(
-      'UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?',
-      [notificationId, userId]
+    if (!mongoose.Types.ObjectId.isValid(notificationId)) {
+      return res.status(400).json({ error: 'Invalid notification ID' });
+    }
+
+    await Notification.findOneAndUpdate(
+      { _id: notificationId, userId },
+      { isRead: true }
     );
-
-    connection.release();
 
     res.json({ success: true, message: 'Notification marked as read' });
   } catch (error) {
-    connection.release();
-    console.error('Mark notification as read error:', error);
+    
     res.status(500).json({ error: 'Failed to mark notification as read' });
   }
 };
 
 // Mark all notifications as read
 export const markAllAsRead = async (req, res) => {
-  const connection = await db.getConnection();
   try {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
 
-    await connection.query(
-      'UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND is_read = FALSE',
-      [userId]
+    await Notification.updateMany(
+      { userId, isRead: false },
+      { isRead: true }
     );
-
-    connection.release();
 
     res.json({ success: true, message: 'All notifications marked as read' });
   } catch (error) {
-    connection.release();
-    console.error('Mark all as read error:', error);
+    
     res.status(500).json({ error: 'Failed to mark all as read' });
   }
 };
 
 // Delete notification
 export const deleteNotification = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { notificationId } = req.params;
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
 
-    await connection.query(
-      'DELETE FROM notifications WHERE id = ? AND user_id = ?',
-      [notificationId, userId]
-    );
+    if (!mongoose.Types.ObjectId.isValid(notificationId)) {
+      return res.status(400).json({ error: 'Invalid notification ID' });
+    }
 
-    connection.release();
+    await Notification.findOneAndDelete({
+      _id: notificationId,
+      userId
+    });
 
     res.json({ success: true, message: 'Notification deleted' });
   } catch (error) {
-    connection.release();
-    console.error('Delete notification error:', error);
+    
     res.status(500).json({ error: 'Failed to delete notification' });
   }
 };
 
 // Get unread count
 export const getUnreadCount = async (req, res) => {
-  const connection = await db.getConnection();
   try {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
 
-    const [result] = await connection.query(
-      'SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = FALSE',
-      [userId]
-    );
+    const count = await Notification.countDocuments({
+      userId,
+      isRead: false
+    });
 
-    connection.release();
-
-    res.json({ success: true, data: { count: result[0].count } });
+    res.json({ success: true, data: { count } });
   } catch (error) {
-    connection.release();
-    console.error('Get unread count error:', error);
+    
     res.status(500).json({ error: 'Failed to get unread count' });
   }
 };
 
 // Get notification settings
 export const getNotificationSettings = async (req, res) => {
-  const connection = await db.getConnection();
   try {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
 
-    const [settings] = await connection.query(
-      'SELECT * FROM notification_settings WHERE user_id = ?',
-      [userId]
-    );
+    const user = await User.findById(userId).select('notificationSettings').lean();
 
-    if (settings.length === 0) {
-      // Create default settings
+    if (!user || !user.notificationSettings) {
+      // Return default settings
       const defaults = {
         email_on_follow: true,
         email_on_comment: true,
@@ -174,104 +164,63 @@ export const getNotificationSettings = async (req, res) => {
         push_on_event_reminder: true,
       };
 
-      await connection.query(
-        `INSERT INTO notification_settings (user_id, email_on_follow, email_on_comment, email_on_mention, 
-         email_on_post_reaction, email_on_comment_reaction, email_on_message, email_on_event_reminder,
-         push_on_follow, push_on_comment, push_on_mention, push_on_post_reaction, 
-         push_on_comment_reaction, push_on_message, push_on_event_reminder) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          userId,
-          defaults.email_on_follow,
-          defaults.email_on_comment,
-          defaults.email_on_mention,
-          defaults.email_on_post_reaction,
-          defaults.email_on_comment_reaction,
-          defaults.email_on_message,
-          defaults.email_on_event_reminder,
-          defaults.push_on_follow,
-          defaults.push_on_comment,
-          defaults.push_on_mention,
-          defaults.push_on_post_reaction,
-          defaults.push_on_comment_reaction,
-          defaults.push_on_message,
-          defaults.push_on_event_reminder,
-        ]
-      );
+      // Update user with default settings
+      await User.findByIdAndUpdate(userId, {
+        notificationSettings: defaults
+      });
 
-      connection.release();
       return res.json({ success: true, data: defaults });
     }
 
-    connection.release();
-
-    res.json({ success: true, data: settings[0] });
+    res.json({ success: true, data: user.notificationSettings });
   } catch (error) {
-    connection.release();
-    console.error('Get notification settings error:', error);
+    
     res.status(500).json({ error: 'Failed to get settings' });
   }
 };
 
 // Update notification settings
 export const updateNotificationSettings = async (req, res) => {
-  const connection = await db.getConnection();
   try {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
     const settings = req.body;
 
-    const updates = [];
-    const params = [];
+    const updates = {};
 
     Object.keys(settings).forEach((key) => {
       if (key.startsWith('email_') || key.startsWith('push_')) {
-        updates.push(`${key} = ?`);
-        params.push(settings[key]);
+        updates[`notificationSettings.${key}`] = settings[key];
       }
     });
 
-    if (updates.length === 0) {
+    if (Object.keys(updates).length === 0) {
       return res.status(400).json({ error: 'No valid settings provided' });
     }
 
-    params.push(userId);
-
-    await connection.query(
-      `UPDATE notification_settings SET ${updates.join(', ')} WHERE user_id = ?`,
-      params
-    );
-
-    connection.release();
+    await User.findByIdAndUpdate(userId, { $set: updates });
 
     res.json({ success: true, message: 'Settings updated successfully' });
-  } catch (error) {
-    connection.release();
-    console.error('Update notification settings error:', error);
+  } catch (
+error) {
+    
     res.status(500).json({ error: 'Failed to update settings' });
   }
 };
 
 // Helper function to create notification for follow
 export const notifyFollow = async (followerId, followingId) => {
-  const connection = await db.getConnection();
   try {
-    const [follower] = await connection.query(
-      'SELECT username FROM users WHERE id = ?',
-      [followerId]
-    );
+    const follower = await User.findById(followerId).select('username').lean();
     
     await createNotification(
       followingId,
       'follow',
-      `@${follower[0].username} started following you`,
+      `@${follower.username} started following you`,
       followerId,
       followerId
     );
-    
-    connection.release();
   } catch (error) {
-    connection.release();
-    console.error('Notify follow error:', error);
+    
   }
 };
 
@@ -279,49 +228,35 @@ export const notifyFollow = async (followerId, followingId) => {
 export const notifyComment = async (postId, commenterId, postOwnerId) => {
   if (commenterId === postOwnerId) return; // Don't notify yourself
 
-  const connection = await db.getConnection();
   try {
-    const [commenter] = await connection.query(
-      'SELECT username FROM users WHERE id = ?',
-      [commenterId]
-    );
+    const commenter = await User.findById(commenterId).select('username').lean();
     
     await createNotification(
       postOwnerId,
       'comment',
-      `@${commenter[0].username} commented on your post`,
+      `@${commenter.username} commented on your post`,
       postId,
       commenterId
     );
-    
-    connection.release();
   } catch (error) {
-    connection.release();
-    console.error('Notify comment error:', error);
+    
   }
 };
 
 // Helper function to create notification for mention
 export const notifyMention = async (mentionerId, mentionedId, postId) => {
-  const connection = await db.getConnection();
   try {
-    const [mentioner] = await connection.query(
-      'SELECT username FROM users WHERE id = ?',
-      [mentionerId]
-    );
+    const mentioner = await User.findById(mentionerId).select('username').lean();
     
     await createNotification(
       mentionedId,
       'mention',
-      `@${mentioner[0].username} mentioned you in a post`,
+      `@${mentioner.username} mentioned you in a post`,
       postId,
       mentionerId
     );
-    
-    connection.release();
   } catch (error) {
-    connection.release();
-    console.error('Notify mention error:', error);
+    
   }
 };
 
@@ -329,25 +264,18 @@ export const notifyMention = async (mentionerId, mentionedId, postId) => {
 export const notifyReaction = async (reactorId, postOwnerId, postId, reactionType) => {
   if (reactorId === postOwnerId) return; // Don't notify yourself
 
-  const connection = await db.getConnection();
   try {
-    const [reactor] = await connection.query(
-      'SELECT username FROM users WHERE id = ?',
-      [reactorId]
-    );
+    const reactor = await User.findById(reactorId).select('username').lean();
     
     await createNotification(
       postOwnerId,
       'post_reaction',
-      `@${reactor[0].username} reacted ${reactionType} to your post`,
+      `@${reactor.username} reacted ${reactionType} to your post`,
       postId,
       reactorId
     );
-    
-    connection.release();
   } catch (error) {
-    connection.release();
-    console.error('Notify reaction error:', error);
+    
   }
 };
 

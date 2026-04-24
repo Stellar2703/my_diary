@@ -11,8 +11,9 @@ const __dirname = path.dirname(__filename);
 const uploadDir = path.join(__dirname, '..', 'uploads');
 const mediaDir = path.join(uploadDir, 'media');
 const facesDir = path.join(uploadDir, 'faces');
+const avatarsDir = path.join(uploadDir, 'avatars');
 
-[uploadDir, mediaDir, facesDir].forEach(dir => {
+[uploadDir, mediaDir, facesDir, avatarsDir].forEach(dir => {
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
@@ -36,6 +37,17 @@ const faceStorage = multer.diskStorage({
   },
   filename: function (req, file, cb) {
     const uniqueName = `face_${uuidv4()}${path.extname(file.originalname)}`;
+    cb(null, uniqueName);
+  }
+});
+
+// Storage configuration for avatars (users and departments)
+const avatarStorage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, avatarsDir);
+  },
+  filename: function (req, file, cb) {
+    const uniqueName = `avatar_${uuidv4()}${path.extname(file.originalname)}`;
     cb(null, uniqueName);
   }
 });
@@ -74,6 +86,21 @@ export const uploadFace = multer({
       cb(null, true);
     } else {
       cb(new Error('Only image files are allowed for face capture'), false);
+    }
+  }
+});
+
+export const uploadAvatar = multer({
+  storage: avatarStorage,
+  limits: {
+    fileSize: 2 * 1024 * 1024 // 2MB for avatars
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (allowedTypes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files (JPEG, PNG, GIF, WebP) are allowed for avatars'), false);
     }
   }
 });

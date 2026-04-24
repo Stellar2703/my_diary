@@ -1,14 +1,28 @@
-import db from '../config/database.js';
-import { extractHashtags, extractMentions, saveHashtags, saveMentions } from './postEnhancementsController.js';
+import { Post, User, Department, Comment, Notification } from '../models/index.js';
+import mongoose from 'mongoose';
+
+// Helper function to extract hashtags from content
+const extractHashtags = (content) => {
+  const hashtagRegex = /#[\w]+/g;
+  const matches = content.match(hashtagRegex);
+  return matches ? matches.map(tag => tag.slice(1).toLowerCase()) : [];
+};
+
+// Helper function to extract mentions from content
+const extractMentions = (content) => {
+  const mentionRegex = /@[\w]+/g;
+  const matches = content.match(mentionRegex);
+  return matches ? matches.map(mention => mention.slice(1).toLowerCase()) : [];
+};
 
 // Create a new post
 export const createPost = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const {
       content,
       mediaType = 'none',
       departmentId,
+      isAlert = false,
       country = 'India',
       state = '',
       city = '',
@@ -20,18 +34,18 @@ export const createPost = async (req, res) => {
     } = req.body;
 
     const userId = req.user.id;
-    const postDate = new Date().toISOString().split('T')[0]; // Current date
 
     // Validate department membership if posting to department
     if (departmentId) {
-      const [membership] = await db.query(
-        `SELECT dm.id FROM department_members dm
-         INNER JOIN departments d ON dm.department_id = d.id
-         WHERE (dm.user_id = ? OR d.created_by = ?) AND dm.department_id = ?`,
-        [userId, userId, departmentId]
-      );
+      const department = await Department.findOne({
+        _id: departmentId,
+        $or: [
+          { 'members.userId': userId },
+          { createdBy: userId }
+        ]
+      });
 
-      if (membership.length === 0) {
+      if (!department) {
         return res.status(403).json({
           success: false,
           message: 'You must be a member of this department to post'
@@ -42,44 +56,115 @@ export const createPost = async (req, res) => {
     // Get media URL if file uploaded
     const mediaUrl = req.file ? `/uploads/media/${req.file.filename}` : null;
 
-    // Insert post
-    const [result] = await db.query(
-      `INSERT INTO posts 
-       (user_id, department_id, content, media_type, media_url, country, state, city, area, street, pin_code, latitude, longitude, post_date) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [userId, departmentId || null, content, mediaType, mediaUrl, country, state, city, area || null, street || null, pinCode || null, latitude || null, longitude || null, postDate]
-    );
-
-    const postId = result.insertId;
-
-    // Extract and save hashtags and mentions
+    // Extract hashtags and mentions
     const hashtags = extractHashtags(content);
     const mentions = extractMentions(content);
 
-    await saveHashtags(connection, postId, hashtags);
-    await saveMentions(connection, postId, mentions, userId);
+    // Create post
+    const post = await Post.create({
+      userId,
+      departmentId: departmentId || null,
+      content,
+      mediaType,
+      mediaUrl,
+      country,
+      state,
+      city,
+      area,
+      street,
+      latitude: latitude || null,
+      longitude: longitude || null,
+      postDate: new Date(),
+      visibility: departmentId ? 'department' : 'public',
+      isActive: true,
+      isAlert: isAlert && departmentId ? true : false, // Alert only works for department posts
+      hashtags,
+      likes: [],
+      shares: [],
+      savedBy: []
+    });
 
-    // Save location to user_locations for future use
+    // Save location to user locations for future use
     if (country && state && city) {
-      await connection.query(
-        `INSERT INTO user_locations (user_id, country, state, city, area, street, pin_code) 
-         VALUES (?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE last_used_at = CURRENT_TIMESTAMP`,
-        [userId, country, state, city, area || null, street || null, pinCode || null]
-      );
+      await User.findByIdAndUpdate(userId, {
+        $push: {
+          locations: {
+            $each: [{
+              country,
+              state,
+              city,
+              area,
+              street,
+              lastUsedAt: new Date()
+            }],
+            $position: 0,
+            $slice: 10 // Keep only last 10 locations
+          }
+        }
+      });
     }
 
-    connection.release();
+    // Create notifications for mentioned users
+    if (mentions.length > 0) {
+      const mentionedUsers = await User.find({
+        username: { $in: mentions }
+      }).select('_id');
+
+      const notifications = mentionedUsers.map(user => ({
+        userId: user._id,
+        fromUserId: userId,
+        type: 'mention',
+        message: 'mentioned you in a post',
+        content: content.substring(0, 100),
+        postId: post._id,
+        isRead: false,
+        isActive: true
+      }));
+
+      if (notifications.length > 0) {
+        await Notification.insertMany(notifications);
+      }
+    }
+
+    // Create notifications for all department members if this is an alert post
+    if (isAlert && departmentId) {
+      const department = await Department.findById(departmentId)
+        .select('members name')
+        .lean();
+
+      if (department && department.members) {
+        // Get all member IDs except the post creator
+        const memberIds = department.members
+          .map(member => member.userId)
+          .filter(memberId => memberId.toString() !== userId.toString());
+
+        if (memberIds.length > 0) {
+          const alertNotifications = memberIds.map(memberId => ({
+            userId: memberId,
+            fromUserId: userId,
+            type: 'department',
+            message: `posted an alert in ${department.name}`,
+            content: content.substring(0, 100),
+            postId: post._id,
+            departmentId: departmentId,
+            isRead: false,
+            isActive: true
+          }));
+
+          await Notification.insertMany(alertNotifications);
+        }
+      }
+    }
 
     res.status(201).json({
       success: true,
       message: 'Post created successfully',
       data: {
-        postId: postId
+        postId: post._id
       }
     });
   } catch (error) {
-    console.error('Create post error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to create post',
@@ -97,151 +182,150 @@ export const getPosts = async (req, res) => {
       state,
       city,
       area,
-      street,
-      pinCode,
-      startDate,
-      endDate,
       username,
       page = 1,
       limit = 10
     } = req.query;
 
-    const offset = (page - 1) * limit;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    let whereConditions = ['p.is_active = TRUE'];
-    let queryParams = [];
+    // Build query
+    const query = { isActive: true };
 
-    // Build WHERE conditions
     if (departmentId) {
-      whereConditions.push('p.department_id = ?');
-      queryParams.push(departmentId);
+      query.departmentId = departmentId;
     }
     if (country) {
-      whereConditions.push('p.country = ?');
-      queryParams.push(country);
+      query.country = country;
     }
     if (state) {
-      whereConditions.push('p.state = ?');
-      queryParams.push(state);
+      query.state = state;
     }
     if (city) {
-      whereConditions.push('p.city = ?');
-      queryParams.push(city);
+      query.city = city;
     }
     if (area) {
-      whereConditions.push('p.area = ?');
-      queryParams.push(area);
+      query.area = area;
     }
-    if (street) {
-      whereConditions.push('p.street LIKE ?');
-      queryParams.push(`%${street}%`);
-    }
-    if (pinCode) {
-      whereConditions.push('p.pin_code = ?');
-      queryParams.push(pinCode);
-    }
-    if (startDate) {
-      whereConditions.push('p.post_date >= ?');
-      queryParams.push(startDate);
-    }
-    if (endDate) {
-      whereConditions.push('p.post_date <= ?');
-      queryParams.push(endDate);
-    }
+
+    // Filter by username if provided
     if (username) {
-      whereConditions.push('u.username = ?');
-      queryParams.push(username);
-    }
-
-    const whereClause = whereConditions.join(' AND ');
-
-    // Additional filter: Only show public posts OR department posts user is member of
-    let accessFilter = '';
-    let accessParams = [];
-    if (req.user) {
-      accessFilter = `AND (
-        p.department_id IS NULL 
-        OR p.department_id IN (
-          SELECT dm.department_id FROM department_members dm WHERE dm.user_id = ?
-          UNION
-          SELECT d.id FROM departments d WHERE d.created_by = ?
-        )
-      )`;
-      accessParams = [req.user.id, req.user.id];
-    } else {
-      // Non-authenticated users only see public posts
-      accessFilter = 'AND p.department_id IS NULL';
-    }
-
-    // Get posts
-    const [posts] = await db.query(
-      `SELECT 
-        p.*,
-        u.name as author_name,
-        u.username as author_username,
-        u.profile_avatar as author_avatar,
-        d.name as department_name,
-        ps.likes_count,
-        ps.comments_count,
-        ps.shares_count
-       FROM posts p
-       INNER JOIN users u ON p.user_id = u.id
-       LEFT JOIN departments d ON p.department_id = d.id
-       LEFT JOIN post_statistics ps ON p.id = ps.post_id
-       WHERE ${whereClause} ${accessFilter}
-       ORDER BY p.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...queryParams, ...accessParams, parseInt(limit), offset]
-    );
-
-    // Get total count
-    const [countResult] = await db.query(
-      `SELECT COUNT(*) as total FROM posts p
-       INNER JOIN users u ON p.user_id = u.id
-       WHERE ${whereClause} ${accessFilter}`,
-      [...queryParams, ...accessParams]
-    );
-
-    const total = countResult[0].total;
-
-    // Check if current user liked/shared posts (if authenticated)
-    if (req.user) {
-      const postIds = posts.map(p => p.id);
-      if (postIds.length > 0) {
-        const placeholders = postIds.map(() => '?').join(',');
-        const [userLikes] = await db.query(
-          `SELECT post_id FROM post_likes WHERE user_id = ? AND post_id IN (${placeholders})`,
-          [req.user.id, ...postIds]
-        );
-        const [userShares] = await db.query(
-          `SELECT post_id FROM post_shares WHERE user_id = ? AND post_id IN (${placeholders})`,
-          [req.user.id, ...postIds]
-        );
-
-        const likedPostIds = new Set(userLikes.map(l => l.post_id));
-        const sharedPostIds = new Set(userShares.map(s => s.post_id));
-
-        posts.forEach(post => {
-          post.isLikedByUser = likedPostIds.has(post.id);
-          post.isSharedByUser = sharedPostIds.has(post.id);
+      const user = await User.findOne({ username }).select('_id');
+      if (user) {
+        query.userId = user._id;
+      } else {
+        return res.json({
+          success: true,
+          data: {
+            posts: [],
+            pagination: {
+              page: pageNum,
+              limit: limitNum,
+              total: 0,
+              totalPages: 0
+            }
+          }
         });
       }
     }
 
+    // Access control: show public posts OR department posts user is member of
+    if (req.user) {
+      // Get user's departments
+      const userDepartments = await Department.find({
+        $or: [
+          { 'members.userId': req.user.id },
+          { createdBy: req.user.id }
+        ]
+      }).select('_id');
+
+      const userDeptIds = userDepartments.map(d => d._id);
+
+      // Show posts where department is null OR user is a member
+      query.$or = [
+        { departmentId: null },
+        { departmentId: { $in: userDeptIds } }
+      ];
+    } else {
+      // Non-authenticated users only see public posts
+      query.departmentId = null;
+    }
+
+    // Get posts with populated data
+    const posts = await Post.find(query)
+      .populate('userId', 'name username profileAvatar')
+      .populate('departmentId', 'name')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
+
+    // Get total count
+    const total = await Post.countDocuments(query);
+
+    // Add computed fields and user interaction status
+    const enrichedPosts = posts.map(post => {
+      const enriched = {
+        ...post,
+        id: post._id.toString(),
+        user_id: post.userId?._id,
+        author_name: post.userId?.name,
+        author_username: post.userId?.username,
+        author_avatar: post.userId?.profileAvatar,
+        department_name: post.departmentId?.name,
+        post_date: post.createdAt,
+        media_url: post.mediaUrl,
+        media_type: post.mediaType,
+        likes_count: post.likes ? post.likes.length : 0,
+        shares_count: post.shares ? post.shares.length : 0,
+        isLikedByUser: false,
+        isSharedByUser: false
+      };
+
+      if (req.user) {
+        enriched.isLikedByUser = post.likes?.some(like => 
+          like.userId.toString() === req.user.id
+        ) || false;
+        enriched.isSharedByUser = post.shares?.some(share => 
+          share.userId.toString() === req.user.id
+        ) || false;
+      }
+
+      return enriched;
+    });
+
+    // Get comment counts for all posts
+    const postIds = posts.map(p => p._id);
+    const commentCounts = await Comment.aggregate([
+      { $match: { postId: { $in: postIds }, isActive: true } },
+      { $group: { _id: '$postId', count: { $sum: 1 } } }
+    ]);
+
+    const commentCountMap = {};
+    commentCounts.forEach(cc => {
+      commentCountMap[cc._id.toString()] = cc.count;
+    });
+
+    enrichedPosts.forEach(post => {
+      post.comments_count = commentCountMap[post._id.toString()] || 0;
+    });
+
     res.json({
       success: true,
       data: {
-        posts,
+        posts: enrichedPosts,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page: pageNum,
+          limit: limitNum,
           total,
-          totalPages: Math.ceil(total / limit)
+          totalPages: Math.ceil(total / limitNum)
         }
       }
     });
   } catch (error) {
-    console.error('Get posts error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch posts',
@@ -255,54 +339,66 @@ export const getPostById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [posts] = await db.query(
-      `SELECT 
-        p.*,
-        u.name as author_name,
-        u.username as author_username,
-        u.profile_avatar as author_avatar,
-        d.name as department_name,
-        ps.likes_count,
-        ps.comments_count,
-        ps.shares_count
-       FROM posts p
-       INNER JOIN users u ON p.user_id = u.id
-       LEFT JOIN departments d ON p.department_id = d.id
-       LEFT JOIN post_statistics ps ON p.id = ps.post_id
-       WHERE p.id = ? AND p.is_active = TRUE`,
-      [id]
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid post ID'
+      });
+    }
 
-    if (posts.length === 0) {
+    const post = await Post.findOne({ _id: id, isActive: true })
+      .populate('userId', 'name username profileAvatar')
+      .populate('departmentId', 'name')
+      .lean();
+
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: 'Post not found'
       });
     }
 
-    const post = posts[0];
+    // Get comment count
+    const commentCount = await Comment.countDocuments({ 
+      postId: post._id,
+      isActive: true 
+    });
 
-    // Check if current user liked/shared (if authenticated)
+    // Enrich post data
+    const enrichedPost = {
+      ...post,
+      id: post._id.toString(),
+      user_id: post.userId?._id,
+      author_name: post.userId?.name,
+      author_username: post.userId?.username,
+      author_avatar: post.userId?.profileAvatar,
+      department_name: post.departmentId?.name,
+      post_date: post.createdAt,
+      media_url: post.mediaUrl,
+      media_type: post.mediaType,
+      likes_count: post.likes ? post.likes.length : 0,
+      comments_count: commentCount,
+      shares_count: post.shares ? post.shares.length : 0,
+      isLikedByUser: false,
+      isSharedByUser: false
+    };
+
+    // Check user interaction status
     if (req.user) {
-      const [likes] = await db.query(
-        'SELECT id FROM post_likes WHERE user_id = ? AND post_id = ?',
-        [req.user.id, id]
-      );
-      const [shares] = await db.query(
-        'SELECT id FROM post_shares WHERE user_id = ? AND post_id = ?',
-        [req.user.id, id]
-      );
-
-      post.isLikedByUser = likes.length > 0;
-      post.isSharedByUser = shares.length > 0;
+      enrichedPost.isLikedByUser = post.likes?.some(like => 
+        like.userId.toString() === req.user.id
+      ) || false;
+      enrichedPost.isSharedByUser = post.shares?.some(share => 
+        share.userId.toString() === req.user.id
+      ) || false;
     }
 
     res.json({
       success: true,
-      data: post
+      data: enrichedPost
     });
   } catch (error) {
-    console.error('Get post error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch post',
@@ -318,38 +414,49 @@ export const updatePost = async (req, res) => {
     const { content } = req.body;
     const userId = req.user.id;
 
-    // Check if post belongs to user
-    const [posts] = await db.query(
-      'SELECT user_id FROM posts WHERE id = ?',
-      [id]
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid post ID'
+      });
+    }
 
-    if (posts.length === 0) {
+    const post = await Post.findById(id);
+
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: 'Post not found'
       });
     }
 
-    if (posts[0].user_id !== userId) {
+    if (post.userId.toString() !== userId) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to update this post'
       });
     }
 
-    // Update post
-    await db.query(
-      'UPDATE posts SET content = ? WHERE id = ?',
-      [content, id]
-    );
+    // Save old content to edit history
+    if (post.editHistory.length < 10) { // Keep last 10 edits
+      post.editHistory.push({
+        content: post.content,
+        editedAt: new Date()
+      });
+    }
+
+    // Update content and hashtags
+    post.content = content;
+    post.hashtags = extractHashtags(content);
+
+    await post.save();
 
     res.json({
       success: true,
       message: 'Post updated successfully'
     });
   } catch (error) {
-    console.error('Update post error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to update post',
@@ -364,20 +471,23 @@ export const deletePost = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    // Check if post belongs to user
-    const [posts] = await db.query(
-      'SELECT user_id FROM posts WHERE id = ?',
-      [id]
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid post ID'
+      });
+    }
 
-    if (posts.length === 0) {
+    const post = await Post.findById(id);
+
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: 'Post not found'
       });
     }
 
-    if (posts[0].user_id !== userId) {
+    if (post.userId.toString() !== userId) {
       return res.status(403).json({
         success: false,
         message: 'Not authorized to delete this post'
@@ -385,17 +495,16 @@ export const deletePost = async (req, res) => {
     }
 
     // Soft delete
-    await db.query(
-      'UPDATE posts SET is_active = FALSE WHERE id = ?',
-      [id]
-    );
+    post.isActive = false;
+    await post.save();
+
 
     res.json({
       success: true,
       message: 'Post deleted successfully'
     });
   } catch (error) {
-    console.error('Delete post error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to delete post',
@@ -409,37 +518,32 @@ export const toggleLike = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
-    // Prevent liking own posts
-    const [postCheck] = await db.query(
-      'SELECT user_id FROM posts WHERE id = ? AND is_active = TRUE',
-      [id]
-    );
 
-    if (postCheck.length === 0) {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid post ID'
+      });
+    }
+
+    const post = await Post.findOne({ _id: id, isActive: true });
+
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: 'Post not found'
       });
     }
 
-    if (postCheck[0].user_id === userId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot like your own post'
-      });
-    }
-    // Check if already liked
-    const [existing] = await db.query(
-      'SELECT id FROM post_likes WHERE user_id = ? AND post_id = ?',
-      [userId, id]
+    // Check if user already liked
+    const likeIndex = post.likes.findIndex(
+      like => like.userId.toString() === userId
     );
 
-    if (existing.length > 0) {
-      // Unlike
-      await db.query(
-        'DELETE FROM post_likes WHERE user_id = ? AND post_id = ?',
-        [userId, id]
-      );
+    if (likeIndex > -1) {
+      // Unlike: remove from array
+      post.likes.splice(likeIndex, 1);
+      await post.save();
 
       return res.json({
         success: true,
@@ -447,20 +551,25 @@ export const toggleLike = async (req, res) => {
         data: { liked: false }
       });
     } else {
-      // Like
-      await db.query(
-        'INSERT INTO post_likes (user_id, post_id) VALUES (?, ?)',
-        [userId, id]
-      );
+      // Like: add to array
+      post.likes.push({
+        userId,
+        reactedAt: new Date()
+      });
+      await post.save();
 
-      // Create notification for post author
-      const postAuthorId = postCheck[0].user_id;
-      if (postAuthorId !== userId) { // Don't notify if liking own post
-        await db.query(
-          `INSERT INTO notifications (user_id, type, message, content, post_id, from_user_id) 
-           VALUES (?, 'like', 'liked your post', 'liked your post', ?, ?)`,
-          [postAuthorId, id, userId]
-        );
+      // Create notification for post author (if not own post)
+      if (post.userId.toString() !== userId) {
+        await Notification.create({
+          userId: post.userId,
+          fromUserId: userId,
+          type: 'like',
+          message: 'liked your post',
+          content: 'liked your post',
+          postId: post._id,
+          isRead: false,
+          isActive: true
+        });
       }
 
       return res.json({
@@ -470,7 +579,7 @@ export const toggleLike = async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('Toggle like error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to toggle like',
@@ -484,37 +593,32 @@ export const toggleShare = async (req, res) => {
   try {
     const { id } = req.params;
     const userId = req.user.id;
-    // Prevent sharing own posts
-    const [postCheck] = await db.query(
-      'SELECT user_id FROM posts WHERE id = ? AND is_active = TRUE',
-      [id]
-    );
 
-    if (postCheck.length === 0) {
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid post ID'
+      });
+    }
+
+    const post = await Post.findOne({ _id: id, isActive: true });
+
+    if (!post) {
       return res.status(404).json({
         success: false,
         message: 'Post not found'
       });
     }
 
-    if (postCheck[0].user_id === userId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot share your own post'
-      });
-    }
-    // Check if already shared
-    const [existing] = await db.query(
-      'SELECT id FROM post_shares WHERE user_id = ? AND post_id = ?',
-      [userId, id]
+    // Check if user already shared
+    const shareIndex = post.shares.findIndex(
+      share => share.userId.toString() === userId
     );
 
-    if (existing.length > 0) {
-      // Unshare
-      await db.query(
-        'DELETE FROM post_shares WHERE user_id = ? AND post_id = ?',
-        [userId, id]
-      );
+    if (shareIndex > -1) {
+      // Unshare: remove from array
+      post.shares.splice(shareIndex, 1);
+      await post.save();
 
       return res.json({
         success: true,
@@ -522,11 +626,26 @@ export const toggleShare = async (req, res) => {
         data: { shared: false }
       });
     } else {
-      // Share
-      await db.query(
-        'INSERT INTO post_shares (user_id, post_id) VALUES (?, ?)',
-        [userId, id]
-      );
+      // Share: add to array
+      post.shares.push({
+        userId,
+        sharedAt: new Date()
+      });
+      await post.save();
+
+      // Create notification for post author (if not own post)
+      if (post.userId.toString() !== userId) {
+        await Notification.create({
+          userId: post.userId,
+          fromUserId: userId,
+          type: 'share',
+          message: 'shared your post',
+          content: 'shared your post',
+          postId: post._id,
+          isRead: false,
+          isActive: true
+        });
+      }
 
       return res.json({
         success: true,
@@ -535,7 +654,7 @@ export const toggleShare = async (req, res) => {
       });
     }
   } catch (error) {
-    console.error('Toggle share error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to toggle share',

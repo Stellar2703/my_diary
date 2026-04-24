@@ -53,17 +53,17 @@ export function PostDetailsModal({ isOpen, onClose, postId }: PostDetailsModalPr
   const loadPost = async () => {
     setIsLoading(true)
     try {
-      console.log('Loading post with ID:', postId)
+      
       const response = await postsApi.getById(postId)
-      console.log('Post API response:', response)
+      
       if (response.success && response.data) {
         setPost(response.data) // Post data is directly in response.data
       } else {
-        console.error('Post load failed:', response.message)
+        
         toast.error(response.message || 'Failed to load post details')
       }
     } catch (error) {
-      console.error('Failed to load post:', error)
+      
       toast.error('Failed to load post details')
     } finally {
       setIsLoading(false)
@@ -77,11 +77,11 @@ export function PostDetailsModal({ isOpen, onClose, postId }: PostDetailsModalPr
       if (response.success) {
         setPost({ ...post, isLikedByUser: !post.isLikedByUser, likes_count: post.isLikedByUser ? post.likes_count - 1 : post.likes_count + 1 })
       } else {
-        console.error('Toggle like failed:', response)
+        
         toast.error(response.message || 'Failed to update like')
       }
     } catch (error) {
-      console.error('Like error:', error)
+      
       toast.error('Failed to update like')
     }
   }

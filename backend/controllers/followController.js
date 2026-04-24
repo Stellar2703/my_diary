@@ -1,341 +1,407 @@
-import pool from '../config/database.js';
+import { User, Notification } from '../models/index.js';
+import mongoose from 'mongoose';
 
 // Follow a user
 export const followUser = async (req, res) => {
-    const connection = await pool.getConnection();
     try {
-        const followerId = req.user.userId;
+        const followerId = req.user.userId || req.user.id;
         const { userId } = req.params;
 
         // Validate
-        if (parseInt(userId) === followerId) {
+        if (userId === followerId) {
             return res.status(400).json({ error: 'Cannot follow yourself' });
         }
 
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
+
         // Check if user exists
-        const [users] = await connection.query('SELECT id FROM users WHERE id = ?', [userId]);
-        if (users.length === 0) {
+        const targetUser = await User.findById(userId);
+        if (!targetUser) {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        // Check if already following
-        const [existing] = await connection.query(
-            'SELECT id FROM follows WHERE follower_id = ? AND following_id = ?',
-            [followerId, userId]
-        );
+        const currentUser = await User.findById(followerId);
 
-        if (existing.length > 0) {
+        // Check if already following
+        if (currentUser.following.includes(userId)) {
             return res.status(400).json({ error: 'Already following this user' });
         }
 
         // Check if blocked
-        const [blocked] = await connection.query(
-            'SELECT id FROM blocked_users WHERE (user_id = ? AND blocked_user_id = ?) OR (user_id = ? AND blocked_user_id = ?)',
-            [followerId, userId, userId, followerId]
-        );
-
-        if (blocked.length > 0) {
+        const isBlocked = currentUser.blockedUsers.includes(userId) || 
+                         targetUser.blockedUsers.includes(followerId);
+        if (isBlocked) {
             return res.status(403).json({ error: 'Cannot follow this user' });
         }
 
         // Create follow relationship
-        await connection.query(
-            'INSERT INTO follows (follower_id, following_id) VALUES (?, ?)',
-            [followerId, userId]
-        );
+        await User.findByIdAndUpdate(followerId, {
+            $addToSet: { following: userId }
+        });
+        await User.findByIdAndUpdate(userId, {
+            $addToSet: { followers: followerId }
+        });
 
         // Create notification
-        await connection.query(
-            `INSERT INTO notifications (user_id, type, notification_type, content, from_user_id, data) 
-             VALUES (?, 'follow', 'follow', 'started following you', ?, JSON_OBJECT('action', 'follow'))`,
-            [userId, followerId]
-        );
+        await Notification.create({
+            userId,
+            type: 'follow',
+            message: 'started following you',
+            content: 'started following you',
+            fromUserId: followerId,
+            isRead: false,
+            isActive: true
+        });
 
         res.json({ message: 'Successfully followed user' });
     } catch (error) {
-        console.error('Follow user error:', error);
+        
         res.status(500).json({ error: 'Failed to follow user' });
-    } finally {
-        connection.release();
     }
 };
 
 // Unfollow a user
 export const unfollowUser = async (req, res) => {
-    const connection = await pool.getConnection();
     try {
-        const followerId = req.user.userId;
+        const followerId = req.user.userId || req.user.id;
         const { userId } = req.params;
 
-        const [result] = await connection.query(
-            'DELETE FROM follows WHERE follower_id = ? AND following_id = ?',
-            [followerId, userId]
-        );
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
 
-        if (result.affectedRows === 0) {
+        // Remove from both users
+        const result1 = await User.findByIdAndUpdate(followerId, {
+            $pull: { following: userId }
+        });
+        await User.findByIdAndUpdate(userId, {
+            $pull: { followers: followerId }
+        });
+
+        if (!result1) {
             return res.status(404).json({ error: 'Not following this user' });
         }
 
         res.json({ message: 'Successfully unfollowed user' });
     } catch (error) {
-        console.error('Unfollow user error:', error);
+        
         res.status(500).json({ error: 'Failed to unfollow user' });
-    } finally {
-        connection.release();
     }
 };
 
 // Get user's followers
 export const getFollowers = async (req, res) => {
-    const connection = await pool.getConnection();
     try {
         const { userId } = req.params;
-        const currentUserId = req.user.userId;
+        const currentUserId = req.user.userId || req.user.id;
 
-        const [followers] = await connection.query(
-            `SELECT 
-                u.id, u.username, u.name, u.avatar, u.bio, u.verified,
-                f.created_at as followed_at,
-                EXISTS(SELECT 1 FROM follows WHERE follower_id = ? AND following_id = u.id) as is_following,
-                EXISTS(SELECT 1 FROM blocked_users WHERE user_id = ? AND blocked_user_id = u.id) as is_blocked
-            FROM follows f
-            JOIN users u ON f.follower_id = u.id
-            WHERE f.following_id = ?
-            ORDER BY f.created_at DESC`,
-            [currentUserId, currentUserId, userId]
-        );
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
 
-        res.json({ followers });
+        const targetUser = await User.findById(userId).select('followers').lean();
+        if (!targetUser) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const currentUser = await User.findById(currentUserId).select('following blockedUsers').lean();
+
+        // Get follower details
+        const followers = await User.find({ _id: { $in: targetUser.followers } })
+            .select('username name profileAvatar bio verified')
+            .lean();
+
+        // Enrich with status
+        const enrichedFollowers = followers.map(f => ({
+            id: f._id,
+            username: f.username,
+            name: f.name,
+            avatar: f.profileAvatar,
+            bio: f.bio,
+            verified: f.verified || false,
+            is_following: currentUser.following.some(id => id.equals(f._id)),
+            is_blocked: currentUser.blockedUsers.some(id => id.equals(f._id))
+        }));
+
+        res.json({ followers: enrichedFollowers });
     } catch (error) {
-        console.error('Get followers error:', error);
+        
         res.status(500).json({ error: 'Failed to get followers' });
-    } finally {
-        connection.release();
     }
 };
 
 // Get users the user is following
 export const getFollowing = async (req, res) => {
-    const connection = await pool.getConnection();
     try {
         const { userId } = req.params;
-        const currentUserId = req.user.userId;
+        const currentUserId = req.user.userId || req.user.id;
 
-        const [following] = await connection.query(
-            `SELECT 
-                u.id, u.username, u.name, u.avatar, u.bio, u.verified,
-                f.created_at as followed_at,
-                EXISTS(SELECT 1 FROM follows WHERE follower_id = ? AND following_id = u.id) as is_following,
-                EXISTS(SELECT 1 FROM blocked_users WHERE user_id = ? AND blocked_user_id = u.id) as is_blocked
-            FROM follows f
-            JOIN users u ON f.following_id = u.id
-            WHERE f.follower_id = ?
-            ORDER BY f.created_at DESC`,
-            [currentUserId, currentUserId, userId]
-        );
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
 
-        res.json({ following });
+        const targetUser = await User.findById(userId).select('following').lean();
+        if (!targetUser) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const currentUser = await User.findById(currentUserId).select('following blockedUsers').lean();
+
+        // Get following details
+        const following = await User.find({ _id: { $in: targetUser.following } })
+            .select('username name profileAvatar bio verified')
+            .lean();
+
+        // Enrich with status
+        const enrichedFollowing = following.map(f => ({
+            id: f._id,
+            username: f.username,
+            name: f.name,
+            avatar: f.profileAvatar,
+            bio: f.bio,
+            verified: f.verified || false,
+            is_following: currentUser.following.some(id => id.equals(f._id)),
+            is_blocked: currentUser.blockedUsers.some(id => id.equals(f._id))
+        }));
+
+        res.json({ following: enrichedFollowing });
     } catch (error) {
-        console.error('Get following error:', error);
+        
         res.status(500).json({ error: 'Failed to get following' });
-    } finally {
-        connection.release();
     }
 };
 
 // Block a user
 export const blockUser = async (req, res) => {
-    const connection = await pool.getConnection();
     try {
-        const userId = req.user.userId;
+        const userId = req.user.userId || req.user.id;
         const { targetUserId } = req.params;
         const { reason } = req.body;
 
         // Validate
-        if (parseInt(targetUserId) === userId) {
+        if (userId === targetUserId) {
             return res.status(400).json({ error: 'Cannot block yourself' });
         }
 
-        // Check if already blocked
-        const [existing] = await connection.query(
-            'SELECT id FROM blocked_users WHERE user_id = ? AND blocked_user_id = ?',
-            [userId, targetUserId]
-        );
+        if (!mongoose.Types.ObjectId.isValid(targetUserId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
 
-        if (existing.length > 0) {
+        // Check if user exists
+        const targetUser = await User.findById(targetUserId);
+        if (!targetUser) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const currentUser = await User.findById(userId);
+
+        // Check if already blocked
+        if (currentUser.blockedUsers.includes(targetUserId)) {
             return res.status(400).json({ error: 'User already blocked' });
         }
 
-        await connection.beginTransaction();
-
-        // Block the user
-        await connection.query(
-            'INSERT INTO blocked_users (user_id, blocked_user_id, reason) VALUES (?, ?, ?)',
-            [userId, targetUserId, reason || null]
-        );
+        // Block user
+        await User.findByIdAndUpdate(userId, {
+            $addToSet: { blockedUsers: targetUserId }
+        });
 
         // Remove follow relationships
-        await connection.query(
-            'DELETE FROM follows WHERE (follower_id = ? AND following_id = ?) OR (follower_id = ? AND following_id = ?)',
-            [userId, targetUserId, targetUserId, userId]
-        );
-
-        await connection.commit();
+        await User.findByIdAndUpdate(userId, {
+            $pull: { followers: targetUserId, following: targetUserId }
+        });
+        await User.findByIdAndUpdate(targetUserId, {
+            $pull: { followers: userId, following: userId }
+        });
 
         res.json({ message: 'User blocked successfully' });
     } catch (error) {
-        await connection.rollback();
-        console.error('Block user error:', error);
+        
         res.status(500).json({ error: 'Failed to block user' });
-    } finally {
-        connection.release();
     }
 };
 
 // Unblock a user
 export const unblockUser = async (req, res) => {
-    const connection = await pool.getConnection();
     try {
-        const userId = req.user.userId;
-        const { targetUserId } = req.params;
+        const userId = req.user.userId || req.user.id;
+        const { blockedUserId } = req.params;
 
-        const [result] = await connection.query(
-            'DELETE FROM blocked_users WHERE user_id = ? AND blocked_user_id = ?',
-            [userId, targetUserId]
-        );
+        if (!mongoose.Types.ObjectId.isValid(blockedUserId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
 
-        if (result.affectedRows === 0) {
+        const result = await User.findByIdAndUpdate(userId, {
+            $pull: { blockedUsers: blockedUserId }
+        });
+
+        if (!result) {
             return res.status(404).json({ error: 'User is not blocked' });
         }
 
         res.json({ message: 'User unblocked successfully' });
     } catch (error) {
-        console.error('Unblock user error:', error);
+        
         res.status(500).json({ error: 'Failed to unblock user' });
-    } finally {
-        connection.release();
     }
 };
 
 // Get blocked users
 export const getBlockedUsers = async (req, res) => {
-    const connection = await pool.getConnection();
     try {
-        const userId = req.user.userId;
+        const userId = req.user.userId || req.user.id;
 
-        const [blockedUsers] = await connection.query(
-            `SELECT 
-                u.id, u.username, u.name, u.avatar,
-                b.reason, b.created_at as blocked_at
-            FROM blocked_users b
-            JOIN users u ON b.blocked_user_id = u.id
-            WHERE b.user_id = ?
-            ORDER BY b.created_at DESC`,
-            [userId]
-        );
+        const user = await User.findById(userId).select('blockedUsers').lean();
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
 
-        res.json({ blockedUsers });
+        const blockedUsers = await User.find({ _id: { $in: user.blockedUsers } })
+            .select('username name profileAvatar bio')
+            .lean();
+
+        const formatted = blockedUsers.map(u => ({
+            id: u._id,
+            username: u.username,
+            name: u.name,
+            avatar: u.profileAvatar,
+            bio: u.bio,
+            blocked_at: new Date()
+        }));
+
+        res.json({ blocked_users: formatted });
     } catch (error) {
-        console.error('Get blocked users error:', error);
+        
         res.status(500).json({ error: 'Failed to get blocked users' });
-    } finally {
-        connection.release();
     }
 };
 
 // Get follow stats
 export const getFollowStats = async (req, res) => {
-    const connection = await pool.getConnection();
     try {
         const { userId } = req.params;
 
-        const [stats] = await connection.query(
-            `SELECT 
-                (SELECT COUNT(*) FROM follows WHERE following_id = ?) as followers_count,
-                (SELECT COUNT(*) FROM follows WHERE follower_id = ?) as following_count`,
-            [userId, userId]
-        );
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
 
-        res.json(stats[0]);
+        const user = await User.findById(userId).select('followers following').lean();
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        res.json({
+            followers_count: user.followers?.length || 0,
+            following_count: user.following?.length || 0
+        });
     } catch (error) {
-        console.error('Get follow stats error:', error);
+        
         res.status(500).json({ error: 'Failed to get follow stats' });
-    } finally {
-        connection.release();
     }
 };
 
 // Check if following
 export const checkFollowing = async (req, res) => {
-    const connection = await pool.getConnection();
     try {
-        const followerId = req.user.userId;
+        const followerId = req.user.userId || req.user.id;
         const { userId } = req.params;
 
-        const [result] = await connection.query(
-            'SELECT id FROM follows WHERE follower_id = ? AND following_id = ?',
-            [followerId, userId]
-        );
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ error: 'Invalid user ID' });
+        }
 
-        res.json({ isFollowing: result.length > 0 });
+        const user = await User.findById(followerId).select('following').lean();
+        const isFollowing = user?.following.some(id => id.equals(userId)) || false;
+
+        res.json({ is_following: isFollowing });
     } catch (error) {
-        console.error('Check following error:', error);
+        
         res.status(500).json({ error: 'Failed to check following status' });
-    } finally {
-        connection.release();
     }
 };
 
 // Get suggested users to follow
 export const getSuggestedUsers = async (req, res) => {
-    const connection = await pool.getConnection();
     try {
-        const userId = req.user.userId;
+        const userId = req.user.userId || req.user.id;
         const limit = parseInt(req.query.limit) || 10;
 
-        // Suggest users based on mutual followers and departments
-        const [suggested] = await connection.query(
-            `SELECT DISTINCT
-                u.id, u.username, u.name, u.avatar, u.bio, u.verified,
-                (SELECT COUNT(*) FROM follows WHERE following_id = u.id) as followers_count,
-                (
-                    SELECT COUNT(*) 
-                    FROM follows f1
-                    WHERE f1.following_id = u.id
-                    AND f1.follower_id IN (
-                        SELECT following_id FROM follows WHERE follower_id = ?
-                    )
-                ) as mutual_followers
-            FROM users u
-            WHERE u.id != ?
-            AND u.id NOT IN (SELECT following_id FROM follows WHERE follower_id = ?)
-            AND u.id NOT IN (SELECT blocked_user_id FROM blocked_users WHERE user_id = ?)
-            AND (
-                u.id IN (
-                    SELECT DISTINCT dm.user_id
-                    FROM department_members dm
-                    WHERE dm.department_id IN (
-                        SELECT department_id FROM department_members WHERE user_id = ?
-                    )
-                )
-                OR u.id IN (
-                    SELECT DISTINCT follower_id
-                    FROM follows
-                    WHERE following_id IN (
-                        SELECT following_id FROM follows WHERE follower_id = ?
-                    )
-                )
-            )
-            ORDER BY mutual_followers DESC, followers_count DESC
-            LIMIT ?`,
-            [userId, userId, userId, userId, userId, userId, limit]
-        );
+        const currentUser = await User.findById(userId)
+            .select('following blockedUsers')
+            .lean();
 
-        res.json({ suggested });
+        if (!currentUser) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        const excludeIds = [
+            userId,
+            ...currentUser.following.map(id => id.toString()),
+            ...currentUser.blockedUsers.map(id => id.toString())
+        ];
+
+        // Find users with mutual connections
+        const usersFollowingMe = await User.find({
+            following: userId,
+            _id: { $nin: excludeIds }
+        }).select('_id').lean();
+
+        const friendOfFriendIds = await User.find({
+            _id: { $in: currentUser.following }
+        }).select('following').lean();
+
+        const allSuggestions = new Set();
+        friendOfFriendIds.forEach(user => {
+            user.following.forEach(id => {
+                const idStr = id.toString();
+                if (!excludeIds.includes(idStr)) {
+                    allSuggestions.add(idStr);
+                }
+            });
+        });
+
+        usersFollowingMe.forEach(user => {
+            allSuggestions.add(user._id.toString());
+        });
+
+        // Get user details and calculate mutual followers
+        const suggestedUsers = await User.find({
+            _id: { $in: Array.from(allSuggestions) }
+        })
+            .select('username name profileAvatar bio verified followers')
+            .lean()
+            .limit(limit * 2); // Get more to filter later
+
+        // Calculate mutual followers and enrich
+        const enriched = suggestedUsers.map(user => {
+            const mutualFollowers = user.followers.filter(fid =>
+                currentUser.following.some(myFid => myFid.equals(fid))
+            ).length;
+
+            return {
+                id: user._id,
+                username: user.username,
+                name: user.name,
+                avatar: user.profileAvatar,
+                bio: user.bio,
+                verified: user.verified || false,
+                followers_count: user.followers?.length || 0,
+                mutual_followers: mutualFollowers
+            };
+        });
+
+        // Sort by mutual followers, then by followers count
+        enriched.sort((a, b) => {
+            if (b.mutual_followers !== a.mutual_followers) {
+                return b.mutual_followers - a.mutual_followers;
+            }
+            return b.followers_count - a.followers_count;
+        });
+
+        res.json({ suggested: enriched.slice(0, limit) });
     } catch (error) {
-        console.error('Get suggested users error:', error);
+        
         res.status(500).json({ error: 'Failed to get suggested users' });
-    } finally {
-        connection.release();
     }
 };

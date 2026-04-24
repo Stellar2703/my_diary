@@ -1,11 +1,11 @@
-import db from '../config/database.js';
+import { Story, User } from '../models/index.js';
+import mongoose from 'mongoose';
 
 // Create story
 export const createStory = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { content, mediaUrl, mediaType, backgroundColor } = req.body;
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
 
     // Stories require either content or media
     if (!content && !mediaUrl) {
@@ -15,258 +15,254 @@ export const createStory = async (req, res) => {
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + 24); // 24 hour expiration
 
-    const [result] = await connection.query(
-      `INSERT INTO stories 
-       (user_id, content, media_url, media_type, background_color, expires_at) 
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [userId, content || null, mediaUrl || null, mediaType || 'text', backgroundColor || '#000000', expiresAt]
-    );
-
-    connection.release();
+    const story = await Story.create({
+      userId,
+      content: content || null,
+      mediaUrl: mediaUrl || null,
+      mediaType: mediaType || 'text',
+      backgroundColor: backgroundColor || '#000000',
+      expiresAt,
+      views: [],
+      isActive: true
+    });
 
     res.json({
       success: true,
       message: 'Story created successfully',
-      data: { storyId: result.insertId, expiresAt },
+      data: { storyId: story._id, expiresAt },
     });
   } catch (error) {
-    connection.release();
-    console.error('Create story error:', error);
+    
     res.status(500).json({ error: 'Failed to create story' });
   }
 };
 
 // Get stories (following users + own stories)
 export const getStories = async (req, res) => {
-  const connection = await db.getConnection();
   try {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
 
-    // Get stories from users you follow + your own stories
-    const [stories] = await connection.query(
-      `SELECT 
-        s.*,
-        u.username, u.name, u.avatar,
-        (SELECT COUNT(*) FROM story_views WHERE story_id = s.id) as view_count,
-        (SELECT COUNT(*) FROM story_views WHERE story_id = s.id AND user_id = ?) as user_viewed
-       FROM stories s
-       JOIN users u ON s.user_id = u.id
-       WHERE s.expires_at > NOW() 
-         AND s.is_active = TRUE
-         AND (s.user_id = ? OR s.user_id IN (
-           SELECT following_id FROM follows WHERE follower_id = ? AND status = 'accepted'
-         ))
-       ORDER BY s.created_at DESC`,
-      [userId, userId, userId]
-    );
+    // Get current user's following list
+    const currentUser = await User.findById(userId).select('following').lean();
+    const viewableUserIds = [userId, ...currentUser.following];
+
+    // Get active stories from users you follow + your own
+    const stories = await Story.find({
+      userId: { $in: viewableUserIds },
+      expiresAt: { $gt: new Date() },
+      isActive: true
+    })
+      .populate('userId', 'username name profileAvatar')
+      .sort({ createdAt: -1 })
+      .lean();
 
     // Group stories by user
     const groupedStories = {};
     stories.forEach((story) => {
-      if (!groupedStories[story.user_id]) {
-        groupedStories[story.user_id] = {
-          userId: story.user_id,
-          username: story.username,
-          name: story.name,
-          avatar: story.avatar,
+      const uid = story.userId._id.toString();
+      if (!groupedStories[uid]) {
+        groupedStories[uid] = {
+          userId: story.userId._id,
+          username: story.userId.username,
+          name: story.userId.name,
+          avatar: story.userId.profileAvatar,
           stories: [],
         };
       }
-      groupedStories[story.user_id].stories.push({
-        id: story.id,
+      const userViewed = story.views.some(v => v.userId.equals(userId));
+      groupedStories[uid].stories.push({
+        id: story._id,
         content: story.content,
-        mediaUrl: story.media_url,
-        mediaType: story.media_type,
-        backgroundColor: story.background_color,
-        createdAt: story.created_at,
-        expiresAt: story.expires_at,
-        viewCount: story.view_count,
-        userViewed: story.user_viewed > 0,
+        mediaUrl: story.mediaUrl,
+        mediaType: story.mediaType,
+        backgroundColor: story.backgroundColor,
+        createdAt: story.createdAt,
+        expiresAt: story.expiresAt,
+        viewCount: story.views.length,
+        userViewed,
       });
     });
-
-    connection.release();
 
     res.json({
       success: true,
       data: Object.values(groupedStories),
     });
   } catch (error) {
-    connection.release();
-    console.error('Get stories error:', error);
+    
     res.status(500).json({ error: 'Failed to get stories' });
   }
 };
 
 // Get user's stories
 export const getUserStories = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { userId } = req.params;
-    const currentUserId = req.user.id;
+    const currentUserId = req.user.id || req.user.userId;
 
-    const [stories] = await connection.query(
-      `SELECT 
-        s.*,
-        (SELECT COUNT(*) FROM story_views WHERE story_id = s.id) as view_count,
-        (SELECT COUNT(*) FROM story_views WHERE story_id = s.id AND user_id = ?) as user_viewed
-       FROM stories s
-       WHERE s.user_id = ? AND s.expires_at > NOW() AND s.is_active = TRUE
-       ORDER BY s.created_at ASC`,
-      [currentUserId, userId]
-    );
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ error: 'Invalid user ID' });
+    }
 
-    connection.release();
+    const stories = await Story.find({
+      userId,
+      expiresAt: { $gt: new Date() },
+      isActive: true
+    })
+      .sort({ createdAt: 1 })
+      .lean();
 
-    res.json({ success: true, data: stories });
+    const enriched = stories.map(s => ({
+      ...s,
+      id: s._id,
+      viewCount: s.views.length,
+      userViewed: s.views.some(v => v.userId.equals(currentUserId))
+    }));
+
+    res.json({ success: true, data: enriched });
   } catch (error) {
-    connection.release();
-    console.error('Get user stories error:', error);
+    
     res.status(500).json({ error: 'Failed to get user stories' });
   }
 };
 
 // View story (track view)
 export const viewStory = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { storyId } = req.params;
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
+
+    if (!mongoose.Types.ObjectId.isValid(storyId)) {
+      return res.status(400).json({ error: 'Invalid story ID' });
+    }
 
     // Check if story exists and is active
-    const [stories] = await connection.query(
-      'SELECT * FROM stories WHERE id = ? AND expires_at > NOW() AND is_active = TRUE',
-      [storyId]
-    );
+    const story = await Story.findOne({
+      _id: storyId,
+      expiresAt: { $gt: new Date() },
+      isActive: true
+    });
 
-    if (stories.length === 0) {
+    if (!story) {
       return res.status(404).json({ error: 'Story not found or expired' });
     }
 
-    const story = stories[0];
-
     // Don't track view if it's the owner's story
-    if (story.user_id !== userId) {
+    if (!story.userId.equals(userId)) {
       // Check if already viewed
-      const [existing] = await connection.query(
-        'SELECT id FROM story_views WHERE story_id = ? AND user_id = ?',
-        [storyId, userId]
-      );
+      const alreadyViewed = story.views.some(v => v.userId.equals(userId));
 
-      if (existing.length === 0) {
+      if (!alreadyViewed) {
         // Record view
-        await connection.query(
-          'INSERT INTO story_views (story_id, user_id) VALUES (?, ?)',
-          [storyId, userId]
-        );
+        await Story.findByIdAndUpdate(storyId, {
+          $push: { views: { userId, viewedAt: new Date() } }
+        });
       }
     }
 
-    connection.release();
-
     res.json({ success: true, message: 'Story viewed' });
   } catch (error) {
-    connection.release();
-    console.error('View story error:', error);
+    
     res.status(500).json({ error: 'Failed to view story' });
   }
 };
 
 // Get story viewers
 export const getStoryViewers = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { storyId } = req.params;
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
+
+    if (!mongoose.Types.ObjectId.isValid(storyId)) {
+      return res.status(400).json({ error: 'Invalid story ID' });
+    }
 
     // Verify story belongs to user
-    const [stories] = await connection.query(
-      'SELECT user_id FROM stories WHERE id = ?',
-      [storyId]
-    );
+    const story = await Story.findById(storyId).select('userId views');
 
-    if (stories.length === 0) {
+    if (!story) {
       return res.status(404).json({ error: 'Story not found' });
     }
 
-    if (stories[0].user_id !== userId) {
+    if (!story.userId.equals(userId)) {
       return res.status(403).json({ error: 'You can only view viewers of your own stories' });
     }
 
-    const [viewers] = await connection.query(
-      `SELECT 
-        sv.*,
-        u.username, u.name, u.avatar
-       FROM story_views sv
-       JOIN users u ON sv.user_id = u.id
-       WHERE sv.story_id = ?
-       ORDER BY sv.viewed_at DESC`,
-      [storyId]
-    );
+    // Get viewer details
+    const viewerIds = story.views.map(v => v.userId);
+    const viewers = await User.find({ _id: { $in: viewerIds } })
+      .select('username name profileAvatar')
+      .lean();
 
-    connection.release();
+    // Enrich with view time
+    const enriched = viewers.map(user => {
+      const view = story.views.find(v => v.userId.equals(user._id));
+      return {
+        id: user._id,
+        username: user.username,
+        name: user.name,
+        avatar: user.profileAvatar,
+        viewed_at: view.viewedAt
+      };
+    });
 
-    res.json({ success: true, data: viewers });
+    // Sort by viewed_at DESC
+    enriched.sort((a, b) => new Date(b.viewed_at) - new Date(a.viewed_at));
+
+    res.json({ success: true, data: enriched });
   } catch (error) {
-    connection.release();
-    console.error('Get story viewers error:', error);
+    
     res.status(500).json({ error: 'Failed to get viewers' });
   }
 };
 
 // Delete story
 export const deleteStory = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { storyId } = req.params;
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.userId;
+
+    if (!mongoose.Types.ObjectId.isValid(storyId)) {
+      return res.status(400).json({ error: 'Invalid story ID' });
+    }
 
     // Verify story belongs to user
-    const [stories] = await connection.query(
-      'SELECT user_id FROM stories WHERE id = ?',
-      [storyId]
-    );
+    const story = await Story.findById(storyId).select('userId');
 
-    if (stories.length === 0) {
+    if (!story) {
       return res.status(404).json({ error: 'Story not found' });
     }
 
-    if (stories[0].user_id !== userId) {
+    if (!story.userId.equals(userId)) {
       return res.status(403).json({ error: 'You can only delete your own stories' });
     }
 
-    await connection.query(
-      'UPDATE stories SET is_active = FALSE WHERE id = ?',
-      [storyId]
-    );
-
-    connection.release();
+    await Story.findByIdAndUpdate(storyId, { isActive: false });
 
     res.json({ success: true, message: 'Story deleted successfully' });
   } catch (error) {
-    connection.release();
-    console.error('Delete story error:', error);
+    
     res.status(500).json({ error: 'Failed to delete story' });
   }
 };
 
 // Delete expired stories (called by cron job or scheduled task)
+// Note: MongoDB TTL index handles this automatically, but keeping for manual trigger
 export const deleteExpiredStories = async (req, res) => {
-  const connection = await db.getConnection();
   try {
-    const [result] = await connection.query(
-      'UPDATE stories SET is_active = FALSE WHERE expires_at <= NOW() AND is_active = TRUE'
+    const result = await Story.updateMany(
+      {
+        expiresAt: { $lte: new Date() },
+        isActive: true
+      },
+      { isActive: false }
     );
-
-    connection.release();
 
     res.json({
       success: true,
-      message: `${result.affectedRows} expired stories removed`,
+      message: `${result.modifiedCount} expired stories removed`,
     });
   } catch (error) {
-    connection.release();
-    console.error('Delete expired stories error:', error);
+    
     res.status(500).json({ error: 'Failed to delete expired stories' });
   }
 };

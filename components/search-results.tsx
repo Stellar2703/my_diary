@@ -79,7 +79,7 @@ export function SearchResults({ filters, hasSearched }: SearchResultsProps) {
       if (response.success && response.data) {
         const posts = response.data.posts || []
         setResults(posts.map((post: any) => ({
-          id: post.id.toString(),
+          id: (post.id || post._id)?.toString() || '',
           title: post.content?.substring(0, 100) || "Untitled Post",
           author: post.name || "Unknown",
           username: post.username || "",
@@ -92,7 +92,7 @@ export function SearchResults({ filters, hasSearched }: SearchResultsProps) {
           thumbnail: post.media_url ? `http://localhost:5000${post.media_url}` : "/placeholder.svg",
           likes: post.reaction_count || 0,
           comments: post.comment_count || 0,
-        })))
+        })).filter((r: any) => r.id)) // Filter out any results without valid ids)
       } else {
         setResults([])
         if (response.message) {
@@ -100,7 +100,7 @@ export function SearchResults({ filters, hasSearched }: SearchResultsProps) {
         }
       }
     } catch (error) {
-      console.error("Failed to load search results:", error)
+      
       toast.error("Failed to load search results")
       setResults([])
     } finally {

@@ -102,6 +102,15 @@ export const authApi = {
       body: JSON.stringify(data),
     });
   },
+
+  uploadAvatar: async (file: File) => {
+    const formData = new FormData();
+    formData.append('avatar', file);
+    return apiCall('/auth/avatar', {
+      method: 'POST',
+      body: formData,
+    });
+  },
 };
 
 // Posts API
@@ -318,6 +327,15 @@ export const departmentsApi = {
   delete: async (id: string | number) => {
     return apiCall(`/departments/${id}`, {
       method: 'DELETE',
+    });
+  },
+
+  uploadAvatar: async (id: string | number, file: File) => {
+    const formData = new FormData();
+    formData.append('avatar', file);
+    return apiCall(`/departments/${id}/avatar`, {
+      method: 'POST',
+      body: formData,
     });
   },
 };

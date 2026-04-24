@@ -1,8 +1,8 @@
-import db from '../config/database.js';
+import { Post, User, Department, Comment } from '../models/index.js';
+import mongoose from 'mongoose';
 
 // Advanced search (posts, users, departments, hashtags)
 export const advancedSearch = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const {
       query,
@@ -21,106 +21,131 @@ export const advancedSearch = async (req, res) => {
       limit = 20,
     } = req.query;
 
-    // Make query optional for location/department filtering
-    const searchTerm = query ? `%${query}%` : null;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
     const results = {};
 
     // Search posts
     if (type === 'all' || type === 'posts') {
-      let postQuery = `
-        SELECT 
-          p.*,
-          u.username, u.name,
-          d.name as department_name,
-          (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) as reaction_count,
-          (SELECT COUNT(*) FROM comments WHERE post_id = p.id) as comment_count
-        FROM posts p
-        JOIN users u ON p.user_id = u.id
-        LEFT JOIN departments d ON p.department_id = d.id
-        WHERE p.is_active = TRUE
-      `;
-
-      const postParams = [];
+      const postQuery = { isActive: true };
 
       // Add search term if provided
-      if (searchTerm) {
-        postQuery += ' AND p.content LIKE ?';
-        postParams.push(searchTerm);
+      if (query) {
+        postQuery.$text = { $search: query };
       }
 
       // Add location filters
-      if (country) {
-        postQuery += ' AND p.country = ?';
-        postParams.push(country);
-      }
-      if (state) {
-        postQuery += ' AND p.state = ?';
-        postParams.push(state);
-      }
-      if (city) {
-        postQuery += ' AND p.city = ?';
-        postParams.push(city);
-      }
-      if (area) {
-        postQuery += ' AND p.area = ?';
-        postParams.push(area);
-      }
+      if (country) postQuery.country = country;
+      if (state) postQuery.state = state;
+      if (city) postQuery.city = city;
+      if (area) postQuery.area = area;
 
       // Add department filter
       if (department) {
-        postQuery += ' AND d.name = ?';
-        postParams.push(department);
+        const dept = await Department.findOne({ name: department });
+        if (dept) postQuery.departmentId = dept._id;
       }
 
       // Add date filters
-      if (dateFrom) {
-        postQuery += ' AND p.post_date >= ?';
-        postParams.push(dateFrom);
-      }
-      if (dateTo) {
-        postQuery += ' AND p.post_date <= ?';
-        postParams.push(dateTo);
+      if (dateFrom || dateTo) {
+        postQuery.postDate = {};
+        if (dateFrom) postQuery.postDate.$gte = new Date(dateFrom);
+        if (dateTo) postQuery.postDate.$lte = new Date(dateTo);
       }
 
       // Add media filters
       if (hasMedia === 'true' || hasMedia === true) {
-        postQuery += ' AND p.media_url IS NOT NULL';
+        postQuery.mediaUrl = { $ne: null };
       }
       if (mediaType && mediaType !== 'all') {
-        postQuery += ' AND p.media_type = ?';
-        postParams.push(mediaType);
+        postQuery.mediaType = mediaType;
       }
 
-      // Add sorting
+      // Build sort
+      let sort = {};
       if (sortBy === 'recent') {
-        postQuery += ' ORDER BY p.post_date DESC, p.created_at DESC';
+        sort = { postDate: -1, createdAt: -1 };
       } else if (sortBy === 'popular') {
-        postQuery += ' ORDER BY reaction_count DESC, comment_count DESC';
+        // Will sort after fetching based on likes/comments count
+        sort = { createdAt: -1 };
       } else {
-        postQuery += ' ORDER BY p.created_at DESC';
+        sort = { createdAt: -1 };
       }
 
-      postQuery += ' LIMIT ? OFFSET ?';
-      postParams.push(parseInt(limit), offset);
+      let posts = await Post.find(postQuery)
+        .populate('userId', 'username name profileAvatar')
+        .populate('departmentId', 'name')
+        .sort(sort)
+        .skip(skip)
+        .limit(limitNum)
+        .lean();
 
-      const [posts] = await connection.query(postQuery, postParams);
+      // Get comment counts
+      const postIds = posts.map(p => p._id);
+      const commentCounts = await Comment.aggregate([
+        { $match: { postId: { $in: postIds }, isActive: true } },
+        { $group: { _id: '$postId', count: { $sum: 1 } } }
+      ]);
+
+      const commentCountMap = {};
+      commentCounts.forEach(cc => {
+        commentCountMap[cc._id.toString()] = cc.count;
+      });
+
+      posts = posts.map(post => ({
+        ...post,
+        id: post._id.toString(),
+        username: post.userId?.username,
+        name: post.userId?.name,
+        avatar: post.userId?.profileAvatar,
+        department_name: post.departmentId?.name,
+        post_date: post.postDate || post.createdAt,
+        reaction_count: post.likes?.length || 0,
+        comment_count: commentCountMap[post._id.toString()] || 0
+      }));
+
+      // Sort by popularity if requested
+      if (sortBy === 'popular') {
+        posts.sort((a, b) => {
+          const scoreA = a.reaction_count * 2 + a.comment_count;
+          const scoreB = b.reaction_count * 2 + b.comment_count;
+          return scoreB - scoreA;
+        });
+      }
+
       results.posts = posts;
     }
 
     // Search users
     if (type === 'all' || type === 'users') {
-      if (searchTerm) {
-        const [users] = await connection.query(
-          `SELECT 
-            u.*,
-            (SELECT COUNT(*) FROM follows WHERE following_id = u.id) as follower_count,
-            (SELECT COUNT(*) FROM posts WHERE user_id = u.id AND is_active = TRUE) as post_count
-           FROM users u
-           WHERE u.username LIKE ? OR u.name LIKE ? OR u.bio LIKE ?
-           LIMIT ? OFFSET ?`,
-          [searchTerm, searchTerm, searchTerm, parseInt(limit), offset]
-        );
+      if (query) {
+        const searchRegex = new RegExp(query, 'i');
+        let users = await User.find({
+          $or: [
+            { username: searchRegex },
+            { name: searchRegex },
+            { bio: searchRegex }
+          ]
+        })
+        .select('-passwordHash')
+        .skip(skip)
+        .limit(limitNum)
+        .lean();
+
+        // Add counts
+        users = await Promise.all(users.map(async (user) => {
+          const followerCount = user.followers?.length || 0;
+          const postCount = await Post.countDocuments({ userId: user._id, isActive: true });
+          return {
+            ...user,
+            id: user._id.toString(),
+            avatar: user.profileAvatar,
+            follower_count: followerCount,
+            post_count: postCount
+          };
+        }));
+
         results.users = users;
       } else {
         results.users = [];
@@ -129,17 +154,30 @@ export const advancedSearch = async (req, res) => {
 
     // Search departments
     if (type === 'all' || type === 'departments') {
-      if (searchTerm) {
-        const [departments] = await connection.query(
-          `SELECT 
-            d.*,
-            (SELECT COUNT(*) FROM department_members WHERE department_id = d.id) as member_count,
-            (SELECT COUNT(*) FROM posts WHERE department_id = d.id AND is_active = TRUE) as post_count
-           FROM departments d
-           WHERE d.name LIKE ? OR d.description LIKE ?
-           LIMIT ? OFFSET ?`,
-          [searchTerm, searchTerm, parseInt(limit), offset]
-        );
+      if (query) {
+        const searchRegex = new RegExp(query, 'i');
+        let departments = await Department.find({
+          $or: [
+            { name: searchRegex },
+            { description: searchRegex }
+          ]
+        })
+        .skip(skip)
+        .limit(limitNum)
+        .lean();
+
+        // Add counts
+        departments = await Promise.all(departments.map(async (dept) => {
+          const memberCount = dept.members?.length || 0;
+          const postCount = await Post.countDocuments({ departmentId: dept._id, isActive: true });
+          return {
+            ...dept,
+            id: dept._id.toString(),
+            member_count: memberCount,
+            post_count: postCount
+          };
+        }));
+
         results.departments = departments;
       } else {
         results.departments = [];
@@ -148,81 +186,92 @@ export const advancedSearch = async (req, res) => {
 
     // Search hashtags
     if (type === 'all' || type === 'hashtags') {
-      if (searchTerm) {
-        const [hashtags] = await connection.query(
-          `SELECT 
-            h.name,
-            COUNT(ph.post_id) as post_count
-           FROM hashtags h
-           JOIN post_hashtags ph ON h.id = ph.hashtag_id
-           WHERE h.name LIKE ?
-           GROUP BY h.id
-           ORDER BY post_count DESC
-           LIMIT ? OFFSET ?`,
-          [searchTerm, parseInt(limit), offset]
-        );
-        results.hashtags = hashtags;
+      if (query) {
+        const searchRegex = new RegExp(query.replace('#', ''), 'i');
+        const hashtagAgg = await Post.aggregate([
+          { $match: { hashtags: searchRegex, isActive: true } },
+          { $unwind: '$hashtags' },
+          { $match: { hashtags: searchRegex } },
+          { $group: { _id: '$hashtags', post_count: { $sum: 1 } } },
+          { $sort: { post_count: -1 } },
+          { $limit: limitNum },
+          { $skip: skip },
+          { $project: { _id: 0, name: '$_id', post_count: 1 } }
+        ]);
+
+        results.hashtags = hashtagAgg;
       } else {
         results.hashtags = [];
       }
     }
 
-    connection.release();
-
     res.json({ success: true, data: results });
   } catch (error) {
-    connection.release();
-    console.error('Advanced search error:', error);
+    
     res.status(500).json({ error: 'Search failed' });
   }
 };
 
 // Get trending content
 export const getTrending = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { period = '24h', limit = 20 } = req.query;
 
-    let timeCondition = '';
+    let timeCondition = new Date();
     if (period === '24h') {
-      timeCondition = 'p.created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)';
+      timeCondition.setHours(timeCondition.getHours() - 24);
     } else if (period === '7d') {
-      timeCondition = 'p.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)';
+      timeCondition.setDate(timeCondition.getDate() - 7);
     } else if (period === '30d') {
-      timeCondition = 'p.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)';
+      timeCondition.setDate(timeCondition.getDate() - 30);
     }
 
-    // Trending posts
-    const [posts] = await connection.query(
-      `SELECT 
-        p.*,
-        u.username, u.name,
-        (SELECT COUNT(*) FROM post_reactions WHERE post_id = p.id) as reaction_count,
-        (SELECT COUNT(*) FROM comments WHERE post_id = p.id) as comment_count,
-        (reaction_count * 2 + comment_count) as engagement_score
-       FROM posts p
-       JOIN users u ON p.user_id = u.id
-       WHERE p.is_active = TRUE AND ${timeCondition}
-       ORDER BY engagement_score DESC
-       LIMIT ?`,
-      [parseInt(limit)]
-    );
+    // Trending posts with engagement score
+    let posts = await Post.find({
+      isActive: true,
+      createdAt: { $gte: timeCondition }
+    })
+    .populate('userId', 'username name')
+    .limit(parseInt(limit))
+    .lean();
+
+    // Get comment counts and calculate engagement
+    const postIds = posts.map(p => p._id);
+    const commentCounts = await Comment.aggregate([
+      { $match: { postId: { $in: postIds }, isActive: true } },
+      { $group: { _id: '$postId', count: { $sum: 1 } } }
+    ]);
+
+    const commentCountMap = {};
+    commentCounts.forEach(cc => {
+      commentCountMap[cc._id.toString()] = cc.count;
+    });
+
+    posts = posts.map(post => {
+      const reactionCount = post.likes?.length || 0;
+      const commentCount = commentCountMap[post._id.toString()] || 0;
+      return {
+        ...post,
+        username: post.userId?.username,
+        name: post.userId?.name,
+        reaction_count: reactionCount,
+        comment_count: commentCount,
+        engagement_score: reactionCount * 2 + commentCount
+      };
+    });
+
+    // Sort by engagement score
+    posts.sort((a, b) => b.engagement_score - a.engagement_score);
 
     // Trending hashtags
-    const [hashtags] = await connection.query(
-      `SELECT 
-        h.name,
-        COUNT(ph.post_id) as post_count
-       FROM hashtags h
-       JOIN post_hashtags ph ON h.id = ph.hashtag_id
-       JOIN posts p ON ph.post_id = p.id
-       WHERE ${timeCondition}
-       GROUP BY h.id
-       ORDER BY post_count DESC
-       LIMIT 10`
-    );
-
-    connection.release();
+    const hashtags = await Post.aggregate([
+      { $match: { isActive: true, createdAt: { $gte: timeCondition }, hashtags: { $exists: true, $ne: [] } } },
+      { $unwind: '$hashtags' },
+      { $group: { _id: '$hashtags', post_count: { $sum: 1 } } },
+      { $sort: { post_count: -1 } },
+      { $limit: 10 },
+      { $project: { _id: 0, name: '$_id', post_count: 1 } }
+    ]);
 
     res.json({
       success: true,
@@ -232,96 +281,121 @@ export const getTrending = async (req, res) => {
       },
     });
   } catch (error) {
-    connection.release();
-    console.error('Get trending error:', error);
+    
     res.status(500).json({ error: 'Failed to get trending content' });
   }
 };
 
 // Get explore/discover feed
 export const getExplore = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const userId = req.user?.id;
     const { page = 1, limit = 20 } = req.query;
-    const offset = (parseInt(page) - 1) * parseInt(limit);
+    const skip = (parseInt(page) - 1) * parseInt(limit);
 
-    // Get posts from users you don't follow + popular departments
-    let query = `
-      SELECT 
-        p.*,
-        u.username, u.name,
-        d.name as department_name,
-        (SELECT COUNT(*) FROM post_reactions WHERE post_id = p.id) as reaction_count,
-        (SELECT COUNT(*) FROM comments WHERE post_id = p.id) as comment_count
-      FROM posts p
-      JOIN users u ON p.user_id = u.id
-      LEFT JOIN departments d ON p.department_id = d.id
-      WHERE p.is_active = TRUE
-    `;
+    const query = { isActive: true };
 
-    const params = [];
-
+    // Exclude posts from users you follow
     if (userId) {
-      query += ` AND p.user_id NOT IN (
-        SELECT following_id FROM follows WHERE follower_id = ? AND status = 'accepted'
-      ) AND p.user_id != ?`;
-      params.push(userId, userId);
+      const user = await User.findById(userId).select('following');
+      const followingIds = user?.following || [];
+      query.userId = { $nin: [...followingIds, userId] };
     }
 
-    query += ' ORDER BY reaction_count DESC, comment_count DESC, p.created_at DESC LIMIT ? OFFSET ?';
-    params.push(parseInt(limit), offset);
+    let posts = await Post.find(query)
+      .populate('userId', 'username name')
+      .populate('departmentId', 'name')
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
 
-    const [posts] = await connection.query(query, params);
+    // Get comment counts
+    const postIds = posts.map(p => p._id);
+    const commentCounts = await Comment.aggregate([
+      { $match: { postId: { $in: postIds }, isActive: true } },
+      { $group: { _id: '$postId', count: { $sum: 1 } } }
+    ]);
 
-    connection.release();
+    const commentCountMap = {};
+    commentCounts.forEach(cc => {
+      commentCountMap[cc._id.toString()] = cc.count;
+    });
+
+    posts = posts.map(post => ({
+      ...post,
+      username: post.userId?.username,
+      name: post.userId?.name,
+      department_name: post.departmentId?.name,
+      reaction_count: post.likes?.length || 0,
+      comment_count: commentCountMap[post._id.toString()] || 0
+    }));
+
+    // Sort by engagement
+    posts.sort((a, b) => {
+      const scoreA = a.reaction_count + a.comment_count;
+      const scoreB = b.reaction_count + b.comment_count;
+      return scoreB - scoreA;
+    });
 
     res.json({ success: true, data: posts });
   } catch (error) {
-    connection.release();
-    console.error('Get explore error:', error);
+    
     res.status(500).json({ error: 'Failed to get explore feed' });
   }
 };
 
 // Get suggested users to follow
 export const getSuggestedUsers = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const userId = req.user.id;
     const { limit = 10 } = req.query;
 
-    // Get users with mutual connections or popular users
-    const [users] = await connection.query(
-      `SELECT 
-        u.*,
-        (SELECT COUNT(*) FROM follows WHERE following_id = u.id AND status = 'accepted') as follower_count,
-        (SELECT COUNT(*) FROM posts WHERE user_id = u.id AND is_active = TRUE) as post_count,
-        (
-          SELECT COUNT(*) FROM follows f1
-          JOIN follows f2 ON f1.following_id = f2.follower_id
-          WHERE f1.follower_id = ? AND f2.following_id = u.id
-          AND f1.status = 'accepted' AND f2.status = 'accepted'
-        ) as mutual_connections
-       FROM users u
-       WHERE u.id != ?
-         AND u.id NOT IN (
-           SELECT following_id FROM follows WHERE follower_id = ? AND status = 'accepted'
-         )
-         AND u.id NOT IN (
-           SELECT blocked_id FROM blocked_users WHERE blocker_id = ?
-         )
-       ORDER BY mutual_connections DESC, follower_count DESC
-       LIMIT ?`,
-      [userId, userId, userId, userId, parseInt(limit)]
-    );
+    const currentUser = await User.findById(userId).select('following blockedUsers');
+    const followingIds = currentUser?.following || [];
+    const blockedIds = currentUser?.blockedUsers || [];
 
-    connection.release();
+    // Find users not followed and not blocked
+    let users = await User.find({
+      _id: { 
+        $nin: [...followingIds, ...blockedIds, userId]
+      }
+    })
+    .select('-passwordHash')
+    .limit(parseInt(limit) * 2) // Get more to calculate mutual connections
+    .lean();
 
-    res.json({ success: true, data: users });
+    // Calculate mutual connections and add counts
+    const usersWithScores = await Promise.all(users.map(async (user) => {
+      // Count mutual connections (people you both follow)
+      const mutualCount = user.following?.filter(id => 
+        followingIds.some(fid => fid.equals(id))
+      ).length || 0;
+
+      const followerCount = user.followers?.length || 0;
+      const postCount = await Post.countDocuments({ userId: user._id, isActive: true });
+
+      return {
+        ...user,
+        follower_count: followerCount,
+        post_count: postCount,
+        mutual_connections: mutualCount
+      };
+    }));
+
+    // Sort by mutual connections, then by followers
+    usersWithScores.sort((a, b) => {
+      if (a.mutual_connections !== b.mutual_connections) {
+        return b.mutual_connections - a.mutual_connections;
+      }
+      return b.follower_count - a.follower_count;
+    });
+
+    // Limit to requested amount
+    const suggestedUsers = usersWithScores.slice(0, parseInt(limit));
+
+    res.json({ success: true, data: suggestedUsers });
   } catch (error) {
-    connection.release();
-    console.error('Get suggested users error:', error);
+    
     res.status(500).json({ error: 'Failed to get suggestions' });
   }
 };

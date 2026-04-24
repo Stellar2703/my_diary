@@ -7,9 +7,10 @@ import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ImageIcon, Video, Volume2, MapPin, X } from "lucide-react"
+import { ImageIcon, Video, Volume2, MapPin, X, AlertCircle } from "lucide-react"
 import { postsApi, userApi, departmentsApi } from "@/lib/api"
 import { toast } from "sonner"
+import { Checkbox } from "@/components/ui/checkbox"
 
 interface PostUploadCardProps {
   defaultDepartmentId?: string
@@ -24,6 +25,7 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
   const [state, setState] = useState("")
   const [country, setCountry] = useState("India")
   const [selectedDepartment, setSelectedDepartment] = useState(defaultDepartmentId || "")
+  const [isAlert, setIsAlert] = useState(false)
   const [isPosting, setIsPosting] = useState(false)
   const [previousLocations, setPreviousLocations] = useState<any[]>([])
   const [departments, setDepartments] = useState<any[]>([])
@@ -50,7 +52,7 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
         setPreviousLocations(Array.isArray(response.data) ? response.data : [])
       }
     } catch (error) {
-      console.error("Failed to load locations:", error)
+      
     }
   }
 
@@ -61,7 +63,7 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
         setDepartments(Array.isArray(response.data) ? response.data : [])
       }
     } catch (error) {
-      console.error("Failed to load departments:", error)
+      
     }
   }
 
@@ -112,6 +114,9 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
       
       if (selectedDepartment) {
         formData.append("departmentId", selectedDepartment)
+        if (isAlert) {
+          formData.append("isAlert", "true")
+        }
       }
 
       const response = await postsApi.create(formData)
@@ -127,6 +132,7 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
         setState("")
         setCountry("India")
         setSelectedDepartment(defaultDepartmentId || "")
+        setIsAlert(false)
         if (fileInputRef.current) {
           fileInputRef.current.value = ""
         }
@@ -256,9 +262,32 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
           )}
         </div>
 
-        {/* Department Selection */}
-        {departments.length > 0 && (
-          <div>
+        {/* Alert checkbox - always visible when inside a department page */}
+        {defaultDepartmentId && (
+          <div className="flex items-center space-x-2 p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-900">
+            <Checkbox
+              id="alert-checkbox"
+              checked={isAlert}
+              onCheckedChange={(checked) => setIsAlert(checked as boolean)}
+            />
+            <div className="flex-1">
+              <label
+                htmlFor="alert-checkbox"
+                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex items-center gap-2"
+              >
+                <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                <span>Send Alert to All Department Members</span>
+              </label>
+              <p className="text-xs text-muted-foreground mt-1">
+                All members will receive a notification for this post
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Department Selection - only shown on home feed (no defaultDepartmentId) */}
+        {!defaultDepartmentId && departments.length > 0 && (
+          <div className="space-y-3">
             <Label>Department (Optional)</Label>
             <Select value={selectedDepartment} onValueChange={setSelectedDepartment}>
               <SelectTrigger>
@@ -272,6 +301,29 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
                 ))}
               </SelectContent>
             </Select>
+
+            {/* Alert Checkbox - shown when a department is selected on home feed */}
+            {selectedDepartment && (
+              <div className="flex items-center space-x-2 p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-900">
+                <Checkbox
+                  id="alert-checkbox-home"
+                  checked={isAlert}
+                  onCheckedChange={(checked) => setIsAlert(checked as boolean)}
+                />
+                <div className="flex-1">
+                  <label
+                    htmlFor="alert-checkbox-home"
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex items-center gap-2"
+                  >
+                    <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                    <span>Send Alert to All Department Members</span>
+                  </label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    All members will receive a notification for this post
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

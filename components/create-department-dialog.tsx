@@ -8,13 +8,14 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { AlertCircle } from "lucide-react"
+import { AlertCircle, Upload, X } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 
 interface CreateDepartmentDialogProps {
   isOpen: boolean
   onClose: () => void
-  onCreate: (data: CreateDepartmentData) => void
+  onCreate: (data: CreateDepartmentData, avatarFile?: File) => void
 }
 
 export interface CreateDepartmentData {
@@ -33,6 +34,41 @@ export function CreateDepartmentDialog({ isOpen, onClose, onCreate }: CreateDepa
   })
 
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const [avatarFile, setAvatarFile] = useState<File | null>(null)
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
+
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      setErrors({ ...errors, avatar: 'Please select an image file' })
+      return
+    }
+
+    // Validate file size (2MB)
+    if (file.size > 2 * 1024 * 1024) {
+      setErrors({ ...errors, avatar: 'Image must be less than 2MB' })
+      return
+    }
+
+    setAvatarFile(file)
+    setAvatarPreview(URL.createObjectURL(file))
+    
+    // Clear avatar error if any
+    const newErrors = { ...errors }
+    delete newErrors.avatar
+    setErrors(newErrors)
+  }
+
+  const clearAvatar = () => {
+    setAvatarFile(null)
+    if (avatarPreview) {
+      URL.revokeObjectURL(avatarPreview)
+      setAvatarPreview(null)
+    }
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -50,20 +86,79 @@ export function CreateDepartmentDialog({ isOpen, onClose, onCreate }: CreateDepa
       return
     }
 
-    onCreate(formData)
+    onCreate(formData, avatarFile || undefined)
+    
+    // Reset form
     setFormData({ name: "", type: "college", description: "", location: "" })
     setErrors({})
+    clearAvatar()
+    onClose()
+  }
+
+  const handleClose = () => {
+    clearAvatar()
     onClose()
   }
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Create New Department / Page</DialogTitle>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Avatar Upload */}
+          <div className="space-y-2">
+            <Label>Department Avatar (Optional)</Label>
+            <div className="flex items-center gap-4">
+              <Avatar className="w-20 h-20">
+                {avatarPreview ? (
+                  <AvatarImage src={avatarPreview} alt="Department avatar" />
+                ) : null}
+                <AvatarFallback className="bg-primary text-primary-foreground text-2xl">
+                  📁
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="bg-transparent"
+                    onClick={() => document.getElementById('avatar-input')?.click()}
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Choose Image
+                  </Button>
+                  {avatarFile && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearAvatar}
+                    >
+                      <X className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  PNG, JPG, GIF or WebP. Max 2MB.
+                </p>
+                {errors.avatar && (
+                  <p className="text-xs text-destructive">{errors.avatar}</p>
+                )}
+              </div>
+              <input
+                id="avatar-input"
+                type="file"
+                accept="image/*"
+                onChange={handleAvatarChange}
+                className="hidden"
+              />
+            </div>
+          </div>
           <div className="space-y-2">
             <Label htmlFor="dept-name">Department / Page Name</Label>
             <Input
@@ -124,7 +219,7 @@ export function CreateDepartmentDialog({ isOpen, onClose, onCreate }: CreateDepa
           </div>
 
           <DialogFooter className="gap-2">
-            <Button type="button" variant="outline" className="bg-transparent" onClick={onClose}>
+            <Button type="button" variant="outline" className="bg-transparent" onClick={handleClose}>
               Cancel
             </Button>
             <Button type="submit">Create Department</Button>

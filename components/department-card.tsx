@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Users, MapPin, Settings } from "lucide-react"
 
 interface Department {
@@ -38,12 +38,30 @@ export function DepartmentCard({ department, onJoin, onViewDetails }: Department
     community: "bg-orange-100 text-orange-700",
   }
 
+  const getAvatarUrl = (avatar: string | undefined) => {
+    if (!avatar) return null;
+    if (avatar.startsWith('http')) return avatar;
+    if (avatar.startsWith('/')) return `http://localhost:5000${avatar}`;
+    if (avatar.startsWith('uploads/')) return `http://localhost:5000/${avatar}`;
+    // bare path like "avatars/xxx.jpg" – needs /uploads/ prefix
+    return `http://localhost:5000/uploads/${avatar}`;
+  };
+
+  const isImageAvatar = (avatar: string | undefined) =>
+    !!avatar && /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(avatar);
+
   return (
     <Card className="overflow-hidden hover:shadow-md transition-shadow">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-3 flex-1">
             <Avatar className="w-12 h-12">
+              {isImageAvatar(department.avatar) ? (
+                <AvatarImage 
+                  src={getAvatarUrl(department.avatar)!} 
+                  alt={department.name}
+                />
+              ) : null}
               <AvatarFallback className={`text-xl ${deptColors[department.type]}`}>
                 {deptIcons[department.type]}
               </AvatarFallback>

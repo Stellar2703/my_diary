@@ -1,29 +1,29 @@
-import db from '../config/database.js';
+import mongoose from 'mongoose';
+import { Comment, Post, Notification } from '../models/index.js';
 
 // Create a reply to a comment (nested comment)
 export const createCommentReply = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { postId, parentCommentId } = req.params;
     const { content } = req.body;
     const userId = req.user.id;
+
+    // Validate ObjectIds
+    if (!mongoose.Types.ObjectId.isValid(postId) || !mongoose.Types.ObjectId.isValid(parentCommentId)) {
+      return res.status(400).json({ error: 'Invalid post or comment ID' });
+    }
 
     if (!content || content.trim() === '') {
       return res.status(400).json({ error: 'Comment content is required' });
     }
 
     // Verify parent comment exists and get its depth
-    const [parentComments] = await connection.query(
-      'SELECT id, depth, user_id, post_id FROM comments WHERE id = ?',
-      [parentCommentId]
-    );
-
-    if (parentComments.length === 0) {
+    const parentComment = await Comment.findById(parentCommentId);
+    if (!parentComment) {
       return res.status(404).json({ error: 'Parent comment not found' });
     }
 
-    const parentComment = parentComments[0];
-    const newDepth = parentComment.depth + 1;
+    const newDepth = (parentComment.depth || 0) + 1;
 
     // Limit nesting depth to 5 levels
     if (newDepth > 5) {
@@ -31,52 +31,58 @@ export const createCommentReply = async (req, res) => {
     }
 
     // Verify post exists
-    const [posts] = await connection.query('SELECT id FROM posts WHERE id = ?', [postId]);
-    if (posts.length === 0) {
+    const post = await Post.findById(postId);
+    if (!post) {
       return res.status(404).json({ error: 'Post not found' });
     }
 
-    await connection.beginTransaction();
-
     // Create the reply
-    const [result] = await connection.query(
-      'INSERT INTO comments (post_id, user_id, content, parent_comment_id, depth) VALUES (?, ?, ?, ?, ?)',
-      [postId, userId, content, parentCommentId, newDepth]
-    );
+    const newComment = await Comment.create({
+      postId,
+      userId,
+      content,
+      parentId: parentCommentId,
+      depth: newDepth
+    });
 
     // Create notification for parent comment author (if not self-reply)
-    if (parentComment.user_id !== userId) {
-      await connection.query(
-        `INSERT INTO notifications (user_id, type, notification_type, content, post_id, comment_id, from_user_id, data)
-         VALUES (?, 'comment', 'comment', 'replied to your comment', ?, ?, ?, JSON_OBJECT('action', 'reply'))`,
-        [parentComment.user_id, postId, result.insertId, userId]
-      );
+    if (parentComment.userId.toString() !== userId) {
+      await Notification.create({
+        userId: parentComment.userId,
+        type: 'comment',
+        notificationType: 'comment',
+        content: 'replied to your comment',
+        postId,
+        commentId: newComment._id,
+        fromUserId: userId,
+        data: {
+          action: 'reply'
+        }
+      });
     }
 
-    await connection.commit();
-
     // Fetch the created reply with user info
-    const [newComment] = await connection.query(
-      `SELECT 
-        c.*,
-        u.username, u.name, u.avatar
-       FROM comments c
-       JOIN users u ON c.user_id = u.id
-       WHERE c.id = ?`,
-      [result.insertId]
-    );
+    const reply = await Comment.findById(newComment._id)
+      .populate('userId', 'username name avatar')
+      .lean();
 
-    connection.release();
+    const enrichedReply = {
+      ...reply,
+      id: reply._id.toString(),
+      author_name: reply.userId?.name,
+      author_username: reply.userId?.username,
+      author_avatar: reply.userId?.avatar,
+      created_at: reply.createdAt,
+      updated_at: reply.updatedAt
+    };
 
     res.status(201).json({
       success: true,
       message: 'Reply created successfully',
-      data: newComment[0]
+      data: enrichedReply
     });
   } catch (error) {
-    await connection.rollback();
-    connection.release();
-    console.error('Create comment reply error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to create reply',
@@ -87,35 +93,52 @@ export const createCommentReply = async (req, res) => {
 
 // Get replies for a comment
 export const getCommentReplies = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { commentId } = req.params;
     const userId = req.user?.id;
 
-    const [replies] = await connection.query(
-      `SELECT 
-        c.*,
-        u.username, u.name, u.avatar,
-        (SELECT COUNT(*) FROM comment_reactions WHERE comment_id = c.id) as reactions_count,
-        ${userId ? `EXISTS(SELECT 1 FROM comment_reactions WHERE comment_id = c.id AND user_id = ${userId}) as has_reacted,` : ''}
-        ${userId ? `(SELECT reaction_type FROM comment_reactions WHERE comment_id = c.id AND user_id = ${userId}) as user_reaction,` : ''}
-        (SELECT COUNT(*) FROM comments WHERE parent_comment_id = c.id) as replies_count
-       FROM comments c
-       JOIN users u ON c.user_id = u.id
-       WHERE c.parent_comment_id = ?
-       ORDER BY c.created_at ASC`,
-      [commentId]
-    );
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(commentId)) {
+      return res.status(400).json({ error: 'Invalid comment ID' });
+    }
 
-    connection.release();
+    const replies = await Comment.find({ parentId: commentId, isActive: true })
+      .populate('userId', 'username name avatar')
+      .sort({ createdAt: 1 })
+      .lean();
+
+    // Add computed fields
+    const repliesWithStats = replies.map(reply => {
+      const reactionsCount = reply.reactions?.length || 0;
+      const hasReacted = userId ? reply.reactions?.some(r => r.userId.toString() === userId) : false;
+      const userReaction = userId ? reply.reactions?.find(r => r.userId.toString() === userId)?.reactionType : null;
+      
+      return {
+        ...reply,
+        id: reply._id.toString(),
+        author_name: reply.userId?.name,
+        author_username: reply.userId?.username,
+        author_avatar: reply.userId?.avatar,
+        created_at: reply.createdAt,
+        updated_at: reply.updatedAt,
+        reactions_count: reactionsCount,
+        has_reacted: hasReacted,
+        user_reaction: userReaction,
+        replies_count: 0 // We'll need to query this separately if needed
+      };
+    });
+
+    // Get replies count for each comment
+    for (let reply of repliesWithStats) {
+      reply.replies_count = await Comment.countDocuments({ parentId: reply._id, isActive: true });
+    }
 
     res.json({
       success: true,
-      data: replies
+      data: repliesWithStats
     });
   } catch (error) {
-    connection.release();
-    console.error('Get comment replies error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to get replies',
@@ -126,41 +149,42 @@ export const getCommentReplies = async (req, res) => {
 
 // Update comment
 export const updateComment = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { id } = req.params;
     const { content } = req.body;
     const userId = req.user.id;
+
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid comment ID' });
+    }
 
     if (!content || content.trim() === '') {
       return res.status(400).json({ error: 'Comment content is required' });
     }
 
     // Verify ownership
-    const [comments] = await connection.query(
-      'SELECT * FROM comments WHERE id = ? AND user_id = ?',
-      [id, userId]
-    );
-
-    if (comments.length === 0) {
+    const comment = await Comment.findOne({ _id: id, userId });
+    if (!comment) {
       return res.status(404).json({ error: 'Comment not found or unauthorized' });
     }
 
-    // Update comment
-    await connection.query(
-      'UPDATE comments SET content = ?, edited_at = NOW() WHERE id = ?',
-      [content, id]
-    );
+    // Add to edit history
+    comment.editHistory.push({
+      content: comment.content,
+      editedAt: new Date()
+    });
 
-    connection.release();
+    // Update comment
+    comment.content = content;
+    await comment.save();
 
     res.json({
       success: true,
       message: 'Comment updated successfully'
     });
   } catch (error) {
-    connection.release();
-    console.error('Update comment error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to update comment',
@@ -171,33 +195,30 @@ export const updateComment = async (req, res) => {
 
 // Delete comment
 export const deleteComment = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { id } = req.params;
     const userId = req.user.id;
 
-    // Verify ownership
-    const [comments] = await connection.query(
-      'SELECT * FROM comments WHERE id = ? AND user_id = ?',
-      [id, userId]
-    );
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid comment ID' });
+    }
 
-    if (comments.length === 0) {
+    // Verify ownership
+    const comment = await Comment.findOne({ _id: id, userId });
+    if (!comment) {
       return res.status(404).json({ error: 'Comment not found or unauthorized' });
     }
 
-    // Delete comment (cascade will handle replies)
-    await connection.query('DELETE FROM comments WHERE id = ?', [id]);
-
-    connection.release();
+    // Delete comment and all its nested replies
+    await deleteCommentAndReplies(id);
 
     res.json({
       success: true,
       message: 'Comment deleted successfully'
     });
   } catch (error) {
-    connection.release();
-    console.error('Delete comment error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to delete comment',
@@ -206,53 +227,48 @@ export const deleteComment = async (req, res) => {
   }
 };
 
+// Helper function to recursively delete comments
+async function deleteCommentAndReplies(commentId) {
+  // Find all replies
+  const replies = await Comment.find({ parentId: commentId });
+  
+  // Recursively delete all replies
+  for (const reply of replies) {
+    await deleteCommentAndReplies(reply._id);
+  }
+  
+  // Delete the comment itself
+  await Comment.findByIdAndDelete(commentId);
+}
+
 // Get comment thread (comment with all nested replies)
 export const getCommentThread = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { commentId } = req.params;
-    const userId = req.user?.id;
 
-    // Recursive CTE to get entire thread
-    const [thread] = await connection.query(
-      `WITH RECURSIVE comment_thread AS (
-        -- Base case: the root comment
-        SELECT 
-          c.*,
-          u.username, u.name, u.avatar,
-          0 as level,
-          CAST(c.id AS CHAR(255)) as path
-        FROM comments c
-        JOIN users u ON c.user_id = u.id
-        WHERE c.id = ?
-        
-        UNION ALL
-        
-        -- Recursive case: replies to comments in the thread
-        SELECT 
-          c.*,
-          u.username, u.name, u.avatar,
-          ct.level + 1,
-          CONCAT(ct.path, '-', c.id)
-        FROM comments c
-        JOIN users u ON c.user_id = u.id
-        JOIN comment_thread ct ON c.parent_comment_id = ct.id
-        WHERE ct.level < 5
-      )
-      SELECT * FROM comment_thread
-      ORDER BY path`,
-      [commentId]
-    );
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(commentId)) {
+      return res.status(400).json({ error: 'Invalid comment ID' });
+    }
 
-    connection.release();
+    // Get the root comment
+    const rootComment = await Comment.findById(commentId)
+      .populate('userId', 'username name avatar')
+      .lean();
+
+    if (!rootComment) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    // Build the thread recursively
+    const thread = await buildThread(rootComment, 0);
 
     res.json({
       success: true,
       data: thread
     });
   } catch (error) {
-    connection.release();
-    console.error('Get comment thread error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to get comment thread',
@@ -260,3 +276,31 @@ export const getCommentThread = async (req, res) => {
     });
   }
 };
+
+// Helper function to build comment thread
+async function buildThread(comment, level) {
+  const thread = [{
+    ...comment,
+    level,
+    path: comment._id.toString()
+  }];
+
+  if (level < 5) {
+    // Get all direct replies
+    const replies = await Comment.find({ parentId: comment._id, isActive: true })
+      .populate('userId', 'username name avatar')
+      .sort({ createdAt: 1 })
+      .lean();
+
+    // Recursively get nested replies
+    for (const reply of replies) {
+      const nestedThread = await buildThread(reply, level + 1);
+      thread.push(...nestedThread.map(item => ({
+        ...item,
+        path: `${comment._id}-${item.path}`
+      })));
+    }
+  }
+
+  return thread;
+}

@@ -46,7 +46,7 @@ export function SearchFiltersComponent({ filters, onFilterChange, onSearch }: Se
           setDepartments(deptData)
         }
       } catch (error) {
-        console.error("Failed to load departments:", error)
+        
         setDepartments([]) // Ensure it's always an array
       }
     }

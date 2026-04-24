@@ -1,271 +1,335 @@
-import db from '../config/database.js';
+import mongoose from 'mongoose';
+import { User, Post, Comment, Department } from '../models/index.js';
 
 // Get user analytics
 export const getUserAnalytics = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const userId = req.user.id;
     const { period = '30d' } = req.query;
 
-    let dateCondition = '';
+    // Calculate date threshold
+    let dateThreshold = new Date();
     if (period === '7d') {
-      dateCondition = 'DATE_SUB(NOW(), INTERVAL 7 DAY)';
+      dateThreshold.setDate(dateThreshold.getDate() - 7);
     } else if (period === '30d') {
-      dateCondition = 'DATE_SUB(NOW(), INTERVAL 30 DAY)';
+      dateThreshold.setDate(dateThreshold.getDate() - 30);
     } else if (period === '90d') {
-      dateCondition = 'DATE_SUB(NOW(), INTERVAL 90 DAY)';
+      dateThreshold.setDate(dateThreshold.getDate() - 90);
+    }
+
+    // Get user with followers/following
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
     }
 
     // Total stats
-    const [stats] = await connection.query(
-      `SELECT 
-        (SELECT COUNT(*) FROM posts WHERE user_id = ? AND is_active = TRUE) as total_posts,
-        (SELECT COUNT(*) FROM follows WHERE following_id = ? AND status = 'accepted') as follower_count,
-        (SELECT COUNT(*) FROM follows WHERE follower_id = ? AND status = 'accepted') as following_count,
-        (SELECT COUNT(*) FROM post_reactions pr JOIN posts p ON pr.post_id = p.id WHERE p.user_id = ?) as total_reactions,
-        (SELECT COUNT(*) FROM comments c JOIN posts p ON c.post_id = p.id WHERE p.user_id = ?) as total_comments
-      `,
-      [userId, userId, userId, userId, userId]
-    );
+    const totalPosts = await Post.countDocuments({ userId, isActive: true });
+    const followerCount = user.followers ? user.followers.length : 0;
+    const followingCount = user.following ? user.following.length : 0;
 
-    // Follower growth over time
-    const [followerGrowth] = await connection.query(
-      `SELECT DATE(created_at) as date, COUNT(*) as count
-       FROM follows
-       WHERE following_id = ? AND status = 'accepted' AND created_at >= ${dateCondition}
-       GROUP BY DATE(created_at)
-       ORDER BY date ASC`,
-      [userId]
+    // Get all user's posts for reaction count
+    const userPosts = await Post.find({ userId }, '_id reactions');
+    const totalReactions = userPosts.reduce((sum, post) => sum + (post.reactions?.length || 0), 0);
+
+    // Get comments on user's posts
+    const totalComments = await Comment.countDocuments({
+      postId: { $in: userPosts.map(p => p._id) }
+    });
+
+    const stats = {
+      total_posts: totalPosts,
+      follower_count: followerCount,
+      following_count: followingCount,
+      total_reactions: totalReactions,
+      total_comments: totalComments
+    };
+
+    // Follower growth over time (followers added since dateThreshold)
+    const followerGrowth = user.followers
+      .filter(f => new Date(f.followedAt) >= dateThreshold)
+      .reduce((acc, f) => {
+        const date = new Date(f.followedAt).toISOString().split('T')[0];
+        if (!acc[date]) acc[date] = { date, count: 0 };
+        acc[date].count++;
+        return acc;
+      }, {});
+
+    const followerGrowthArray = Object.values(followerGrowth).sort((a, b) => 
+      new Date(a.date) - new Date(b.date)
     );
 
     // Post engagement over time
-    const [postEngagement] = await connection.query(
-      `SELECT DATE(p.created_at) as date,
-        COUNT(DISTINCT pr.id) as reactions,
-        COUNT(DISTINCT c.id) as comments
-       FROM posts p
-       LEFT JOIN post_reactions pr ON p.id = pr.post_id
-       LEFT JOIN comments c ON p.id = c.post_id
-       WHERE p.user_id = ? AND p.created_at >= ${dateCondition}
-       GROUP BY DATE(p.created_at)
-       ORDER BY date ASC`,
-      [userId]
+    const posts = await Post.find(
+      { userId, createdAt: { $gte: dateThreshold } },
+      'createdAt reactions'
+    );
+
+    const postEngagement = await Promise.all(
+      posts.map(async post => {
+        const commentCount = await Comment.countDocuments({ postId: post._id });
+        return {
+          date: new Date(post.createdAt).toISOString().split('T')[0],
+          reactions: post.reactions?.length || 0,
+          comments: commentCount
+        };
+      })
+    );
+
+    // Group by date
+    const engagementByDate = postEngagement.reduce((acc, item) => {
+      if (!acc[item.date]) {
+        acc[item.date] = { date: item.date, reactions: 0, comments: 0 };
+      }
+      acc[item.date].reactions += item.reactions;
+      acc[item.date].comments += item.comments;
+      return acc;
+    }, {});
+
+    const postEngagementArray = Object.values(engagementByDate).sort((a, b) => 
+      new Date(a.date) - new Date(b.date)
     );
 
     // Top posts by engagement
-    const [topPosts] = await connection.query(
-      `SELECT 
-        p.*,
-        (SELECT COUNT(*) FROM post_reactions WHERE post_id = p.id) as reaction_count,
-        (SELECT COUNT(*) FROM comments WHERE post_id = p.id) as comment_count,
-        (reaction_count + comment_count) as total_engagement
-       FROM posts p
-       WHERE p.user_id = ? AND p.is_active = TRUE AND p.created_at >= ${dateCondition}
-       ORDER BY total_engagement DESC
-       LIMIT 5`,
-      [userId]
+    const topPostsData = await Post.find(
+      { userId, isActive: true, createdAt: { $gte: dateThreshold } }
+    ).lean();
+
+    const topPostsWithEngagement = await Promise.all(
+      topPostsData.map(async post => {
+        const commentCount = await Comment.countDocuments({ postId: post._id });
+        const reactionCount = post.reactions?.length || 0;
+        return {
+          ...post,
+          reaction_count: reactionCount,
+          comment_count: commentCount,
+          total_engagement: reactionCount + commentCount
+        };
+      })
     );
 
-    connection.release();
+    const topPosts = topPostsWithEngagement
+      .sort((a, b) => b.total_engagement - a.total_engagement)
+      .slice(0, 5);
 
     res.json({
       success: true,
       data: {
-        stats: stats[0],
-        followerGrowth,
-        postEngagement,
+        stats,
+        followerGrowth: followerGrowthArray,
+        postEngagement: postEngagementArray,
         topPosts,
       },
     });
   } catch (error) {
-    connection.release();
-    console.error('Get user analytics error:', error);
+    
     res.status(500).json({ error: 'Failed to get analytics' });
   }
 };
 
 // Get post analytics
 export const getPostAnalytics = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { postId } = req.params;
     const userId = req.user.id;
 
-    // Verify post ownership
-    const [posts] = await connection.query(
-      'SELECT user_id FROM posts WHERE id = ?',
-      [postId]
-    );
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(postId)) {
+      return res.status(400).json({ error: 'Invalid post ID' });
+    }
 
-    if (posts.length === 0) {
+    // Verify post ownership
+    const post = await Post.findById(postId);
+    if (!post) {
       return res.status(404).json({ error: 'Post not found' });
     }
 
-    if (posts[0].user_id !== userId) {
+    if (post.userId.toString() !== userId) {
       return res.status(403).json({ error: 'You can only view analytics for your own posts' });
     }
 
-    // Get or create analytics record
-    await connection.query(
-      'INSERT INTO post_analytics (post_id) VALUES (?) ON DUPLICATE KEY UPDATE post_id = post_id',
-      [postId]
-    );
-
-    const [analytics] = await connection.query(
-      'SELECT * FROM post_analytics WHERE post_id = ?',
-      [postId]
-    );
-
     // Reaction breakdown
-    const [reactions] = await connection.query(
-      `SELECT reaction_type, COUNT(*) as count
-       FROM post_reactions
-       WHERE post_id = ?
-       GROUP BY reaction_type`,
-      [postId]
-    );
+    const reactionCounts = post.reactions.reduce((acc, reaction) => {
+      const type = reaction.reactionType;
+      if (!acc[type]) {
+        acc[type] = { reaction_type: type, count: 0 };
+      }
+      acc[type].count++;
+      return acc;
+    }, {});
+
+    const reactions = Object.values(reactionCounts);
 
     // Comments count
-    const [comments] = await connection.query(
-      'SELECT COUNT(*) as count FROM comments WHERE post_id = ?',
-      [postId]
-    );
+    const commentCount = await Comment.countDocuments({ postId });
 
-    // Shares count (if sharing is implemented)
-    const [shares] = await connection.query(
-      'SELECT COUNT(*) as count FROM post_shares WHERE post_id = ?',
-      [postId]
-    );
+    // Shares count
+    const shareCount = post.shares?.length || 0;
 
-    connection.release();
+    // Likes count (for backward compatibility)
+    const likeCount = post.likes?.length || 0;
 
     res.json({
       success: true,
       data: {
-        ...analytics[0],
+        post_id: postId,
+        views: 0, // We can implement view tracking later
+        clicks: 0, // We can implement click tracking later
         reactions,
-        comment_count: comments[0].count,
-        share_count: shares[0].count,
+        comment_count: commentCount,
+        share_count: shareCount,
+        like_count: likeCount,
+        total_engagement: reactions.reduce((sum, r) => sum + r.count, 0) + commentCount + shareCount
       },
     });
   } catch (error) {
-    connection.release();
-    console.error('Get post analytics error:', error);
+    
     res.status(500).json({ error: 'Failed to get post analytics' });
   }
 };
 
 // Get department analytics (admin/moderator only)
 export const getDepartmentAnalytics = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { departmentId } = req.params;
     const { period = '30d' } = req.query;
 
-    let dateCondition = '';
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(departmentId)) {
+      return res.status(400).json({ error: 'Invalid department ID' });
+    }
+
+    // Calculate date threshold
+    let dateThreshold = new Date();
     if (period === '7d') {
-      dateCondition = 'DATE_SUB(NOW(), INTERVAL 7 DAY)';
+      dateThreshold.setDate(dateThreshold.getDate() - 7);
     } else if (period === '30d') {
-      dateCondition = 'DATE_SUB(NOW(), INTERVAL 30 DAY)';
+      dateThreshold.setDate(dateThreshold.getDate() - 30);
     } else if (period === '90d') {
-      dateCondition = 'DATE_SUB(NOW(), INTERVAL 90 DAY)';
+      dateThreshold.setDate(dateThreshold.getDate() - 90);
+    }
+
+    // Get department
+    const department = await Department.findById(departmentId);
+    if (!department) {
+      return res.status(404).json({ error: 'Department not found' });
     }
 
     // Total stats
-    const [stats] = await connection.query(
-      `SELECT 
-        (SELECT COUNT(*) FROM department_members WHERE department_id = ?) as member_count,
-        (SELECT COUNT(*) FROM posts WHERE department_id = ? AND is_active = TRUE) as total_posts,
-        (SELECT COUNT(*) FROM posts p 
-         JOIN post_reactions pr ON p.id = pr.post_id 
-         WHERE p.department_id = ?) as total_reactions,
-        (SELECT COUNT(*) FROM posts p
-         JOIN comments c ON p.id = c.post_id
-         WHERE p.department_id = ?) as total_comments
-      `,
-      [departmentId, departmentId, departmentId, departmentId]
-    );
+    const memberCount = department.members?.length || 0;
+    const totalPosts = await Post.countDocuments({ departmentId, isActive: true });
+    
+    // Get all department posts for reaction count
+    const deptPosts = await Post.find({ departmentId }, '_id reactions');
+    const totalReactions = deptPosts.reduce((sum, post) => sum + (post.reactions?.length || 0), 0);
+
+    // Get comments on department posts
+    const totalComments = await Comment.countDocuments({
+      postId: { $in: deptPosts.map(p => p._id) }
+    });
+
+    const stats = {
+      member_count: memberCount,
+      total_posts: totalPosts,
+      total_reactions: totalReactions,
+      total_comments: totalComments
+    };
 
     // Member growth over time
-    const [memberGrowth] = await connection.query(
-      `SELECT DATE(joined_at) as date, COUNT(*) as count
-       FROM department_members
-       WHERE department_id = ? AND joined_at >= ${dateCondition}
-       GROUP BY DATE(joined_at)
-       ORDER BY date ASC`,
-      [departmentId]
+    const memberGrowth = department.members
+      .filter(m => new Date(m.joinedAt) >= dateThreshold)
+      .reduce((acc, m) => {
+        const date = new Date(m.joinedAt).toISOString().split('T')[0];
+        if (!acc[date]) acc[date] = { date, count: 0 };
+        acc[date].count++;
+        return acc;
+      }, {});
+
+    const memberGrowthArray = Object.values(memberGrowth).sort((a, b) => 
+      new Date(a.date) - new Date(b.date)
     );
 
     // Post activity over time
-    const [postActivity] = await connection.query(
-      `SELECT DATE(created_at) as date, COUNT(*) as count
-       FROM posts
-       WHERE department_id = ? AND is_active = TRUE AND created_at >= ${dateCondition}
-       GROUP BY DATE(created_at)
-       ORDER BY date ASC`,
-      [departmentId]
+    const posts = await Post.find(
+      { departmentId, isActive: true, createdAt: { $gte: dateThreshold } },
+      'createdAt'
+    );
+
+    const postActivity = posts.reduce((acc, post) => {
+      const date = new Date(post.createdAt).toISOString().split('T')[0];
+      if (!acc[date]) acc[date] = { date, count: 0 };
+      acc[date].count++;
+      return acc;
+    }, {});
+
+    const postActivityArray = Object.values(postActivity).sort((a, b) => 
+      new Date(a.date) - new Date(b.date)
     );
 
     // Top contributors
-    const [topContributors] = await connection.query(
-      `SELECT 
-        u.id, u.username, u.name, u.avatar,
-        COUNT(p.id) as post_count,
-        COUNT(DISTINCT pr.id) as reactions_received
-       FROM users u
-       JOIN posts p ON u.id = p.user_id
-       LEFT JOIN post_reactions pr ON p.id = pr.post_id
-       WHERE p.department_id = ? AND p.is_active = TRUE AND p.created_at >= ${dateCondition}
-       GROUP BY u.id
-       ORDER BY post_count DESC, reactions_received DESC
-       LIMIT 10`,
-      [departmentId]
-    );
+    const postsWithUsers = await Post.find(
+      { departmentId, isActive: true, createdAt: { $gte: dateThreshold } }
+    ).populate('userId', 'id username name avatar').lean();
 
-    connection.release();
+    const contributorStats = postsWithUsers.reduce((acc, post) => {
+      const userId = post.userId._id.toString();
+      if (!acc[userId]) {
+        acc[userId] = {
+          id: post.userId._id,
+          username: post.userId.username,
+          name: post.userId.name,
+          avatar: post.userId.avatar,
+          post_count: 0,
+          reactions_received: 0
+        };
+      }
+      acc[userId].post_count++;
+      acc[userId].reactions_received += post.reactions?.length || 0;
+      return acc;
+    }, {});
+
+    const topContributors = Object.values(contributorStats)
+      .sort((a, b) => b.post_count - a.post_count || b.reactions_received - a.reactions_received)
+      .slice(0, 10);
 
     res.json({
       success: true,
       data: {
-        stats: stats[0],
-        memberGrowth,
-        postActivity,
+        stats,
+        memberGrowth: memberGrowthArray,
+        postActivity: postActivityArray,
         topContributors,
       },
     });
   } catch (error) {
-    connection.release();
-    console.error('Get department analytics error:', error);
+    
     res.status(500).json({ error: 'Failed to get department analytics' });
   }
 };
 
 // Track analytics event
 export const trackEvent = async (req, res) => {
-  const connection = await db.getConnection();
   try {
     const { eventType, targetType, targetId } = req.body;
     const userId = req.user?.id;
 
-    // Update analytics based on event type
-    if (eventType === 'post_view' && targetType === 'post') {
-      await connection.query(
-        'UPDATE post_analytics SET views = views + 1 WHERE post_id = ?',
-        [targetId]
-      );
-    } else if (eventType === 'post_click' && targetType === 'post') {
-      await connection.query(
-        'UPDATE post_analytics SET clicks = clicks + 1 WHERE post_id = ?',
-        [targetId]
-      );
+    // Validate ObjectId if provided
+    if (targetId && !mongoose.Types.ObjectId.isValid(targetId)) {
+      return res.status(400).json({ error: 'Invalid target ID' });
     }
 
-    connection.release();
+    // Note: For now, we're not persisting view/click analytics
+    // In a production system, you might want to create a separate Analytics collection
+    // or add view/click counters to the Post model
+    
+    // Future implementation could include:
+    // - Creating an Analytics model with events log
+    // - Adding view/click counters to Post schema
+    // - Using a time-series collection for analytics events
 
     res.json({ success: true, message: 'Event tracked' });
   } catch (error) {
-    connection.release();
-    console.error('Track event error:', error);
+    
     res.status(500).json({ error: 'Failed to track event' });
   }
 };

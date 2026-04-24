@@ -5,6 +5,15 @@ import morgan from 'morgan';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import http from 'http';
+
+// Import configuration
+import connectDB from './config/database.js';
+import logger from './config/logger.js';
+import { initializeSocket } from './config/socket.js';
+import { generalLimiter, authLimiter } from './middleware/rateLimiter.js';
+import { requestLogger } from './middleware/requestLogger.js';
+import { globalErrorHandler, notFoundHandler } from './utils/errorHandler.js';
 
 // Import routes
 import authRoutes from './routes/authRoutes.js';
@@ -24,12 +33,6 @@ import moderationRoutes from './routes/moderationRoutes.js';
 import securityRoutes from './routes/securityRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 
-// Import middleware
-import { errorHandler, notFound } from './middleware/errorHandler.js';
-
-// Import database connection
-import './config/database.js';
-
 // Get __dirname equivalent for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,23 +42,51 @@ dotenv.config();
 
 // Initialize Express app
 const app = express();
+const server = http.createServer(app);
 
-// Middleware
+// Initialize Socket.io for real-time notifications
+const io = initializeSocket(server);
+app.set('io', io);
+
+// ====== SECURITY MIDDLEWARE ======
 app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" }
-})); // Security headers with CORS fix for images
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  contentSecurityPolicy: false, // Allow images from various sources
+  strictTransportSecurity: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
+}));
+
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
-app.use(morgan('dev')); // Request logging
-app.use(express.json()); // Parse JSON bodies
-app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
-// Serve static files (uploads)
+// ====== LOGGING MIDDLEWARE ======
+app.use(morgan('combined', {
+  stream: {
+    write: (message) => logger.http(message.trim())
+  }
+}));
+app.use(requestLogger);
+
+// ====== BODY PARSING MIDDLEWARE ======
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// ====== STATIC FILES ======
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// API Routes
+// ====== RATE LIMITING ======
+app.use('/api/', generalLimiter);
+app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/login', authLimiter);
+
+// ====== API ROUTES ======
 app.use('/api/auth', authRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/departments', departmentRoutes);
@@ -73,16 +104,17 @@ app.use('/api/moderation', moderationRoutes);
 app.use('/api/security', securityRoutes);
 app.use('/api/analytics', analyticsRoutes);
 
-// Health check endpoint
+// ====== HEALTH CHECK ======
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     message: 'PeekHour API is running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
-// Root endpoint
+// ====== ROOT ENDPOINT ======
 app.get('/', (req, res) => {
   res.json({
     success: true,
@@ -93,24 +125,54 @@ app.get('/', (req, res) => {
       posts: '/api/posts',
       departments: '/api/departments',
       comments: '/api',
-      user: '/api/user'
+      user: '/api/user',
+      realtime: 'WebSocket at /'
     }
   });
 });
 
-// Error handling
-app.use(notFound);
-app.use(errorHandler);
+// ====== ERROR HANDLING ======
+app.use(notFoundHandler);
+app.use(globalErrorHandler);
 
-// Start server
+// ====== START SERVER ======
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log('🚀 PeekHour API Server Started');
-  console.log(`📡 Server running on port ${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🔗 API URL: http://localhost:${PORT}`);
-  console.log(`📊 Health Check: http://localhost:${PORT}/api/health`);
+connectDB().then(() => {
+  server.listen(PORT, () => {
+    logger.info('🚀 PeekHour API Server Started', {
+      port: PORT,
+      environment: process.env.NODE_ENV || 'development',
+      apiUrl: `http://localhost:${PORT}`,
+      healthCheck: `http://localhost:${PORT}/api/health`,
+      webSocketEnabled: true,
+      redisEnabled: true,
+      rateLimitingEnabled: true
+    });
+  });
+}).catch((err) => {
+  logger.error('❌ Failed to start server:', { error: err.message });
+  process.exit(1);
+});
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (err) => {
+  logger.error('Uncaught Exception:', { error: err.message, stack: err.stack });
+  process.exit(1);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection:', { reason, promise });
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  server.close(() => {
+    logger.info('Server closed');
+    process.exit(0);
+  });
 });
 
 export default app;

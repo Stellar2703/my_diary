@@ -1,9 +1,9 @@
 import express from 'express';
 import { body } from 'express-validator';
-import { register, login, getProfile, updateProfile, logout } from '../controllers/authController.js';
+import { register, login, getProfile, updateProfile, uploadUserAvatar, logout } from '../controllers/authController.js';
 import { authenticate } from '../middleware/auth.js';
 import { validate } from '../middleware/validator.js';
-import { uploadFace } from '../middleware/upload.js';
+import { uploadFace, uploadAvatar } from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -35,6 +35,7 @@ router.post('/register', uploadFace.single('faceImage'), registerValidation, val
 router.post('/login', loginValidation, validate, login);
 router.get('/profile', authenticate, getProfile);
 router.put('/profile', authenticate, updateProfile);
+router.post('/avatar', authenticate, uploadAvatar.single('avatar'), uploadUserAvatar);
 router.post('/logout', authenticate, logout);
 
 export default router;

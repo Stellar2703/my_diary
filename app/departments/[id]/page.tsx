@@ -31,7 +31,7 @@ interface Department {
 }
 
 interface Member {
-  id: number
+  id: string
   user_id: number
   name: string
   username: string
@@ -269,9 +269,9 @@ function DepartmentViewContent() {
               </Card>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {members.map((member) => (
+                {members.map((member, index) => (
                   <Card
-                    key={member.id}
+                    key={member.id || member.user_id?.toString() || index}
                     className="cursor-pointer hover:shadow-md transition-shadow"
                     onClick={() => router.push(`/profile/${member.username}`)}
                   >

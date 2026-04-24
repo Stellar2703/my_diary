@@ -42,7 +42,7 @@ export function DepartmentsList() {
       if (response.success && response.data) {
         const depts = response.data.departments || []
         setDepartments(depts.map((d: any) => ({
-          id: d.id.toString(),
+          id: (d.id || d._id)?.toString() || '',
           name: d.name,
           type: d.type || "community",
           description: d.description || "",
@@ -51,26 +51,45 @@ export function DepartmentsList() {
           avatar: d.avatar || "🏢",
           location: d.location || "",
           isJoined: d.is_member || false,
-        })))
+        })).filter((d: any) => d.id)) // Filter out any invalid departments
       }
     } catch (error) {
-      console.error("Failed to load departments:", error)
+      
       toast.error("Failed to load departments")
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleCreateDepartment = (data: CreateDepartmentData) => {
-    const newDept: Department = {
-      id: (departments.length + 1).toString(),
-      ...data,
-      members: 1,
-      posts: 0,
-      avatar: "🆕",
-      isJoined: true,
+  const handleCreateDepartment = async (data: CreateDepartmentData, avatarFile?: File) => {
+    try {
+      // Create the department first
+      const response = await departmentsApi.create(data)
+      
+      if (response.success && response.data) {
+        const departmentId = response.data.departmentId
+        
+        // Upload avatar if provided
+        if (avatarFile && departmentId) {
+          try {
+            await departmentsApi.uploadAvatar(departmentId, avatarFile)
+          } catch (error) {
+            
+            // Don't fail the whole operation if avatar upload fails
+            toast.error("Department created but avatar upload failed")
+          }
+        }
+        
+        // Reload departments to get the new one
+        await loadDepartments()
+        toast.success("Department created successfully")
+      } else {
+        toast.error(response.message || "Failed to create department")
+      }
+    } catch (error) {
+      
+      toast.error("Failed to create department")
     }
-    setDepartments([newDept, ...departments])
   }
 
   const handleJoinDepartment = async (id: string) => {
@@ -81,7 +100,7 @@ export function DepartmentsList() {
         toast.success("Joined department successfully")
       }
     } catch (error) {
-      console.error("Failed to join department:", error)
+      
       toast.error("Failed to join department")
     }
   }

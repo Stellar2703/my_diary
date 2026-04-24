@@ -1,11 +1,14 @@
 export const errorHandler = (err, req, res, next) => {
-  console.error('Error:', err);
+  const statusCode = err.statusCode || err.status || 500;
+  if (statusCode !== 404) {
+    
+  }
 
   // Default error
   let error = {
     success: false,
     message: err.message || 'Internal server error',
-    statusCode: err.statusCode || 500
+    statusCode: statusCode
   };
 
   // Validation error
@@ -14,16 +17,19 @@ export const errorHandler = (err, req, res, next) => {
     error.message = Object.values(err.errors).map(e => e.message).join(', ');
   }
 
-  // Duplicate key error (MySQL)
-  if (err.code === 'ER_DUP_ENTRY') {
+  // MongoDB duplicate key error
+  if (err.code === 11000) {
     error.statusCode = 400;
-    error.message = 'Duplicate entry. This record already exists.';
+    const field = Object.keys(err.keyPattern || {})[0];
+    error.message = field 
+      ? `Duplicate ${field}. This record already exists.`
+      : 'Duplicate entry. This record already exists.';
   }
 
-  // Foreign key constraint error
-  if (err.code === 'ER_NO_REFERENCED_ROW_2') {
+  // MongoDB cast error (invalid ObjectId)
+  if (err.name === 'CastError') {
     error.statusCode = 400;
-    error.message = 'Referenced record does not exist.';
+    error.message = `Invalid ${err.path}: ${err.value}`;
   }
 
   res.status(error.statusCode).json({
@@ -35,6 +41,6 @@ export const errorHandler = (err, req, res, next) => {
 
 export const notFound = (req, res, next) => {
   const error = new Error(`Not Found - ${req.originalUrl}`);
-  res.status(404);
+  error.statusCode = 404;
   next(error);
 };

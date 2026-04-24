@@ -1,4 +1,5 @@
-import db from '../config/database.js';
+import { User, Post, Department, Comment } from '../models/index.js';
+import mongoose from 'mongoose';
 
 // Get user profile by username
 export const getUserProfile = async (req, res) => {
@@ -6,58 +7,76 @@ export const getUserProfile = async (req, res) => {
     const { username } = req.params;
 
     // Get user info
-    const [users] = await db.query(
-      `SELECT id, name, username, email, mobile, bio, location, 
-              profile_avatar, created_at
-       FROM users 
-       WHERE username = ?`,
-      [username]
-    );
+    const user = await User.findOne({ username })
+      .select('name username email mobile bio location profileAvatar createdAt')
+      .lean();
 
-    if (users.length === 0) {
+    if (!user) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    const user = users[0];
-
     // Get user statistics
-    const [stats] = await db.query(
-      `SELECT 
-        (SELECT COUNT(*) FROM posts WHERE user_id = ? AND is_active = TRUE) as posts_count,
-        (SELECT COUNT(*) FROM post_likes pl 
-         INNER JOIN posts p ON pl.post_id = p.id 
-         WHERE p.user_id = ? AND p.is_active = TRUE) as likes_received,
-        (SELECT COUNT(*) FROM department_members WHERE user_id = ?) as departments_count,
-        (SELECT COUNT(*) FROM comments WHERE user_id = ? AND is_active = TRUE) as comments_count`,
-      [user.id, user.id, user.id, user.id]
-    );
+    const [postsCount, likesReceived, departmentsCount, commentsCount] = await Promise.all([
+      Post.countDocuments({ userId: user._id, isActive: true }),
+      Post.aggregate([
+        { $match: { userId: user._id, isActive: true } },
+        { $project: { likesCount: { $size: '$likes' } } },
+        { $group: { _id: null, total: { $sum: '$likesCount' } } }
+      ]),
+      Department.countDocuments({ 
+        'members.userId': user._id, 
+        isActive: true 
+      }),
+      Comment.countDocuments({ userId: user._id, isActive: true })
+    ]);
 
     // Get user's departments
-    const [departments] = await db.query(
-      `SELECT d.id, d.name, d.type, d.avatar, dm.role
-       FROM department_members dm
-       INNER JOIN departments d ON dm.department_id = d.id
-       WHERE dm.user_id = ? AND d.is_active = TRUE
-       ORDER BY dm.joined_at DESC
-       LIMIT 5`,
-      [user.id]
-    );
+    const departments = await Department.find({
+      'members.userId': user._id,
+      isActive: true
+    })
+      .select('name type avatar members')
+      .sort({ 'members.joinedAt': -1 })
+      .limit(5)
+      .lean();
+
+    const enrichedDepartments = departments.map(d => {
+      const member = d.members.find(m => m.userId.equals(user._id));
+      return {
+        id: d._id,
+        name: d.name,
+        type: d.type,
+        avatar: d.avatar,
+        role: member?.role
+      };
+    });
 
     res.json({
       success: true,
       data: {
         user: {
-          ...user,
-          ...stats[0]
+          id: user._id,
+          name: user.name,
+          username: user.username,
+          email: user.email,
+          mobile: user.mobile,
+          bio: user.bio,
+          location: user.location,
+          profile_avatar: user.profileAvatar,
+          created_at: user.createdAt,
+          posts_count: postsCount,
+          likes_received: likesReceived[0]?.total || 0,
+          departments_count: departmentsCount,
+          comments_count: commentsCount
         },
-        departments
+        departments: enrichedDepartments
       }
     });
   } catch (error) {
-    console.error('Get user profile error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch user profile',
@@ -71,94 +90,73 @@ export const getUserPosts = async (req, res) => {
   try {
     const { username } = req.params;
     const { page = 1, limit = 10 } = req.query;
-    const offset = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
     // Get user ID
-    const [users] = await db.query(
-      'SELECT id FROM users WHERE username = ?',
-      [username]
-    );
+    const user = await User.findOne({ username }).select('_id').lean();
 
-    if (users.length === 0) {
+    if (!user) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    const userId = users[0].id;
+    const userId = user._id;
+    const currentUserId = req.user?.id || req.user?.userId;
 
-    // Get posts (only public or department posts current user can see)
-    let accessFilter = '';
-    let accessParams = [userId];
+    // Build query - only show posts user can access
+    const query = { userId, isActive: true };
 
-    if (req.user) {
-      accessFilter = `AND (
-        p.department_id IS NULL 
-        OR p.department_id IN (
-          SELECT dm.department_id FROM department_members dm WHERE dm.user_id = ?
-          UNION
-          SELECT d.id FROM departments d WHERE d.created_by = ?
-        )
-      )`;
-      accessParams.push(req.user.id, req.user.id);
+    if (currentUserId) {
+      // Show public posts OR department posts user is member of
+      const userDepartments = await Department.find({
+        'members.userId': currentUserId
+      }).select('_id').lean();
+
+      const departmentIds = userDepartments.map(d => d._id);
+      query.$or = [
+        { departmentId: null },
+        { departmentId: { $in: departmentIds } }
+      ];
     } else {
-      accessFilter = 'AND p.department_id IS NULL';
+      // Only public posts
+      query.departmentId = null;
     }
 
-    const [posts] = await db.query(
-      `SELECT 
-        p.*,
-        u.name as author_name,
-        u.username as author_username,
-        u.profile_avatar as author_avatar,
-        d.name as department_name,
-        ps.likes_count,
-        ps.comments_count,
-        ps.shares_count
-       FROM posts p
-       INNER JOIN users u ON p.user_id = u.id
-       LEFT JOIN departments d ON p.department_id = d.id
-       LEFT JOIN post_statistics ps ON p.id = ps.post_id
-       WHERE p.user_id = ? AND p.is_active = TRUE ${accessFilter}
-       ORDER BY p.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...accessParams, parseInt(limit), offset]
-    );
+    // Get posts with author and department info
+    const posts = await Post.find(query)
+      .populate('userId', 'name username profileAvatar')
+      .populate('departmentId', 'name')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
 
     // Get total count
-    const [countResult] = await db.query(
-      `SELECT COUNT(*) as total FROM posts p
-       WHERE p.user_id = ? AND p.is_active = TRUE ${accessFilter}`,
-      accessParams
-    );
+    const total = await Post.countDocuments(query);
 
-    const total = countResult[0].total;
-
-    // Check if current user liked/shared posts
-    if (req.user && posts.length > 0) {
-      const postIds = posts.map(p => p.id);
-      const [userLikes] = await db.query(
-        `SELECT post_id FROM post_likes WHERE user_id = ? AND post_id IN (?)`,
-        [req.user.id, postIds]
-      );
-      const [userShares] = await db.query(
-        `SELECT post_id FROM post_shares WHERE user_id = ? AND post_id IN (?)`,
-        [req.user.id, postIds]
-      );
-
-      const likedIds = new Set(userLikes.map(l => l.post_id));
-      const sharedIds = new Set(userShares.map(s => s.post_id));
-
-      posts.forEach(post => {
-        post.isLikedByUser = likedIds.has(post.id);
-        post.isSharedByUser = sharedIds.has(post.id);
-      });
-    }
+    // Enrich posts
+    const enriched = posts.map(p => ({
+      ...p,
+      id: p._id.toString(),
+      author_name: p.userId.name,
+      author_username: p.userId.username,
+      author_avatar: p.userId.profileAvatar,
+      department_name: p.departmentId?.name,
+      post_date: p.createdAt,
+      media_url: p.mediaUrl,
+      media_type: p.mediaType,
+      likes_count: p.likes.length,
+      comments_count: 0, // Will be calculated if needed
+      shares_count: p.shares.length,
+      isLikedByUser: currentUserId ? p.likes.some(l => l.userId.equals(currentUserId)) : false,
+      isSharedByUser: currentUserId ? p.shares.some(s => s.userId.equals(currentUserId)) : false
+    }));
 
     res.json({
       success: true,
-      data: posts,
+      data: enriched,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit),
@@ -167,7 +165,7 @@ export const getUserPosts = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get user posts error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch user posts',
@@ -181,60 +179,112 @@ export const getUserActivity = async (req, res) => {
   try {
     const { username } = req.params;
     const { page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
+    const skip = (page - 1) * limit;
 
     // Get user ID
-    const [users] = await db.query(
-      'SELECT id FROM users WHERE username = ?',
-      [username]
-    );
+    const user = await User.findOne({ username }).select('_id').lean();
 
-    if (users.length === 0) {
+    if (!user) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
       });
     }
 
-    const userId = users[0].id;
+    const userId = user._id;
 
-    // Get recent activity
-    const [activity] = await db.query(
-      `(SELECT 'like' as type, pl.created_at, p.id as post_id, p.content as post_content, 
-               u.name as post_author, u.username as post_author_username
-        FROM post_likes pl
-        INNER JOIN posts p ON pl.post_id = p.id
-        INNER JOIN users u ON p.user_id = u.id
-        WHERE pl.user_id = ? AND p.is_active = TRUE)
-       UNION
-       (SELECT 'comment' as type, c.created_at, p.id as post_id, p.content as post_content,
-               u.name as post_author, u.username as post_author_username
-        FROM comments c
-        INNER JOIN posts p ON c.post_id = p.id
-        INNER JOIN users u ON p.user_id = u.id
-        WHERE c.user_id = ? AND c.is_active = TRUE AND p.is_active = TRUE)
-       UNION
-       (SELECT 'share' as type, ps.created_at, p.id as post_id, p.content as post_content,
-               u.name as post_author, u.username as post_author_username
-        FROM post_shares ps
-        INNER JOIN posts p ON ps.post_id = p.id
-        INNER JOIN users u ON p.user_id = u.id
-        WHERE ps.user_id = ? AND p.is_active = TRUE)
-       ORDER BY created_at DESC
-       LIMIT ? OFFSET ?`,
-      [userId, userId, userId, parseInt(limit), offset]
-    );
+    // Get likes from embedded arrays
+    const likedPosts = await Post.find({
+      'likes.userId': userId,
+      isActive: true
+    })
+      .populate('userId', 'name username')
+      .select('content userId likes createdAt')
+      .sort({ 'likes.createdAt': -1 })
+      .lean();
+
+    const likes = likedPosts.map(p => {
+      const like = p.likes.find(l => l.userId.equals(userId));
+      return {
+        type: 'like',
+        created_at: like.createdAt,
+        post_id: p._id,
+        post_content: p.content,
+        post_author: p.userId.name,
+        post_author_username: p.userId.username
+      };
+    });
+
+    // Get comments
+    const comments = await Comment.find({
+      userId,
+      isActive: true
+    })
+      .populate('postId', 'content userId')
+      .populate('postId.userId', 'name username')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const commentActivities = await Promise.all(comments.map(async (c) => {
+      const post = await Post.findById(c.postId)
+        .populate('userId', 'name username')
+        .select('content userId')
+        .lean();
+      
+      if (!post) return null;
+      
+      return {
+        type: 'comment',
+        created_at: c.createdAt,
+        post_id: post._id,
+        post_content: post.content,
+        post_author: post.userId.name,
+        post_author_username: post.userId.username
+      };
+    }));
+
+    // Get shares from embedded arrays
+    const sharedPosts = await Post.find({
+      'shares.userId': userId,
+      isActive: true
+    })
+      .populate('userId', 'name username')
+      .select('content userId shares createdAt')
+      .sort({ 'shares.createdAt': -1 })
+      .lean();
+
+    const shares = sharedPosts.map(p => {
+      const share = p.shares.find(s => s.userId.equals(userId));
+      return {
+        type: 'share',
+        created_at: share.createdAt,
+        post_id: p._id,
+        post_content: p.content,
+        post_author: p.userId.name,
+        post_author_username: p.userId.username
+      };
+    });
+
+    // Combine and sort all activities
+    const allActivities = [
+      ...likes,
+      ...commentActivities.filter(a => a !== null),
+      ...shares
+    ].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    // Paginate
+    const paginated = allActivities.slice(skip, skip + parseInt(limit));
 
     res.json({
       success: true,
-      data: activity,
+      data: paginated,
       pagination: {
         page: parseInt(page),
         limit: parseInt(limit)
       }
     });
   } catch (error) {
-    console.error('Get user activity error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch user activity',

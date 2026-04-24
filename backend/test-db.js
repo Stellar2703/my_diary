@@ -1,37 +1,61 @@
 // Quick database connection test
-import db from './config/database.js';
+import connectDB from './config/database.js';
+import mongoose from 'mongoose';
+import { 
+  User, 
+  Post, 
+  Department, 
+  Comment, 
+  Notification,
+  Story,
+  Message,
+  Conversation
+} from './models/index.js';
 
 async function testConnection() {
   try {
     console.log('🔍 Testing database connection...\n');
     
-    // Test connection
-    const [result] = await db.query('SELECT 1 + 1 AS result');
+    // Connect to MongoDB
+    await connectDB();
     console.log('✅ Database connection successful');
-    console.log('   Query test:', result[0]);
     
-    // Check tables
-    const [tables] = await db.query('SHOW TABLES');
-    console.log('\n📊 Tables in database:');
-    tables.forEach((table, index) => {
-      console.log(`   ${index + 1}. ${Object.values(table)[0]}`);
+    // Check collections
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    console.log('\n📊 Collections in database:');
+    collections.forEach((collection, index) => {
+      console.log(`   ${index + 1}. ${collection.name}`);
     });
     
-    // Check users table
-    const [users] = await db.query('SELECT COUNT(*) as count FROM users');
-    console.log(`\n👥 Users: ${users[0].count}`);
+    // Check document counts
+    const userCount = await User.countDocuments();
+    console.log(`\n👥 Users: ${userCount}`);
     
-    // Check posts table
-    const [posts] = await db.query('SELECT COUNT(*) as count FROM posts');
-    console.log(`📝 Posts: ${posts[0].count}`);
+    const postCount = await Post.countDocuments();
+    console.log(`📝 Posts: ${postCount}`);
     
-    // Check departments table
-    const [depts] = await db.query('SELECT COUNT(*) as count FROM departments');
-    console.log(`🏢 Departments: ${depts[0].count}`);
+    const deptCount = await Department.countDocuments();
+    console.log(`🏢 Departments: ${deptCount}`);
+    
+    const commentCount = await Comment.countDocuments();
+    console.log(`💬 Comments: ${commentCount}`);
+    
+    const notificationCount = await Notification.countDocuments();
+    console.log(`🔔 Notifications: ${notificationCount}`);
+    
+    const storyCount = await Story.countDocuments();
+    console.log(`📸 Stories: ${storyCount}`);
+    
+    const messageCount = await Message.countDocuments();
+    console.log(`✉️ Messages: ${messageCount}`);
+    
+    const conversationCount = await Conversation.countDocuments();
+    console.log(`💭 Conversations: ${conversationCount}`);
     
     console.log('\n✅ All integrity checks passed!');
     console.log('🚀 Backend is ready to use.\n');
     
+    await mongoose.connection.close();
     process.exit(0);
   } catch (error) {
     console.error('\n❌ Database test failed:', error.message);

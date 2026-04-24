@@ -4,12 +4,13 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { MessageCircle, Share2, Download, ZoomIn, Zap, ChevronDown, ChevronUp } from "lucide-react"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { MessageCircle, Share2, Download, ZoomIn, Zap, ChevronDown, ChevronUp, AlertCircle } from "lucide-react"
 import { CommentSection } from "./comment-section"
 import { postsApi } from "@/lib/api"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
+import { Badge } from "@/components/ui/badge"
 
 interface Post {
   id: string | number
@@ -31,6 +32,7 @@ interface Post {
   shares_count: number
   isLikedByUser?: boolean
   isSharedByUser?: boolean
+  isAlert?: boolean
 }
 
 interface PostFeedProps {
@@ -62,7 +64,7 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
         setPosts(response.data.posts || [])
       }
     } catch (error) {
-      console.error("Failed to load posts:", error)
+      
       toast.error("Failed to load posts")
     } finally {
       setIsLoading(false)
@@ -89,7 +91,7 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
         toast.error(response.message || "Failed to update like")
       }
     } catch (error) {
-      console.error("Like error:", error)
+      
       toast.error("Failed to update like")
     }
   }
@@ -118,17 +120,25 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
   }
 
   const getRelativeDate = (dateString: string) => {
-    const date = new Date(dateString)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
-    const diffDays = Math.floor(diffHours / 24)
+    if (!dateString) return "Just now"
+    
+    try {
+      const date = new Date(dateString)
+      if (isNaN(date.getTime())) return "Just now"
+      
+      const now = new Date()
+      const diffMs = now.getTime() - date.getTime()
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+      const diffDays = Math.floor(diffHours / 24)
 
-    if (diffHours < 1) return "Just now"
-    if (diffHours < 24) return `${diffHours} hours ago`
-    if (diffDays === 1) return "Yesterday"
-    if (diffDays < 7) return `${diffDays} days ago`
-    return date.toLocaleDateString()
+      if (diffHours < 1) return "Just now"
+      if (diffHours < 24) return `${diffHours} hours ago`
+      if (diffDays === 1) return "Yesterday"
+      if (diffDays < 7) return `${diffDays} days ago`
+      return date.toLocaleDateString()
+    } catch {
+      return "Just now"
+    }
   }
 
   if (isLoading && posts.length === 0) {
@@ -169,7 +179,14 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
                     onClick={() => router.push(`/profile/${post.author_username}`)}
                   >
                     <Avatar>
-                      <AvatarFallback className="bg-primary text-primary-foreground">{post.author_avatar}</AvatarFallback>
+                      {post.author_avatar?.startsWith('/') ? (
+                        <AvatarImage src={`http://localhost:5000${post.author_avatar}`} alt={post.author_name} />
+                      ) : null}
+                      <AvatarFallback className="bg-primary text-primary-foreground">
+                        {post.author_avatar && !post.author_avatar.startsWith('/') 
+                          ? post.author_avatar 
+                          : post.author_name?.charAt(0) || '?'}
+                      </AvatarFallback>
                     </Avatar>
                     <div className="flex-1">
                       <p className="font-semibold text-sm hover:underline">{post.author_name}</p>
@@ -180,9 +197,15 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
                 </div>
 
                 {/* Location & Department */}
-                <div className="flex gap-4 text-xs text-muted-foreground mb-3">
+                <div className="flex flex-wrap gap-2 items-center text-xs text-muted-foreground mb-3">
                   <span>📍 {post.area ? `${post.area}, ` : ''}{post.city}, {post.state}</span>
                   {post.department_name && <span>🏢 {post.department_name}</span>}
+                  {post.isAlert && (
+                    <Badge variant="destructive" className="gap-1 text-xs">
+                      <AlertCircle className="w-3 h-3" />
+                      Alert
+                    </Badge>
+                  )}
                 </div>
 
                 {/* Content */}

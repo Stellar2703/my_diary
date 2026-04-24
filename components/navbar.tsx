@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { MapPin, Search, Home, Plus, Bell, Settings, LogOut, Users, Heart, MessageCircle } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { userApi } from "@/lib/api"
+import { UserSettingsDialog } from "./user-settings-dialog"
 
 interface Notification {
   id: number
@@ -52,7 +53,7 @@ export function Navbar() {
         setUnreadCount(notifs.filter((n: Notification) => !n.is_read).length)
       }
     } catch (error) {
-      console.error("Failed to load notifications:", error)
+      
     }
   }
 
@@ -61,7 +62,7 @@ export function Navbar() {
       await userApi.markNotificationRead(id)
       loadNotifications()
     } catch (error) {
-      console.error("Failed to mark as read:", error)
+      
     }
   }
 
@@ -70,7 +71,7 @@ export function Navbar() {
       await userApi.markAllNotificationsRead()
       loadNotifications()
     } catch (error) {
-      console.error("Failed to mark all as read:", error)
+      
     }
   }
 
@@ -81,11 +82,6 @@ export function Navbar() {
     } else {
       window.location.href = "/home"
     }
-  }
-
-  const handleSettings = () => {
-    // Navigate to settings page (to be created)
-    window.location.href = "/settings"
   }
 
   return (
@@ -184,9 +180,7 @@ export function Navbar() {
                 </ScrollArea>
               </PopoverContent>
             </Popover>
-            <Button variant="ghost" size="icon" title="Settings" onClick={handleSettings}>
-              <Settings className="w-5 h-5" />
-            </Button>
+            <UserSettingsDialog />
             <Button variant="ghost" size="icon" className="text-destructive" title="Logout" onClick={logout}>
               <LogOut className="w-5 h-5" />
             </Button>

@@ -60,30 +60,26 @@ export default function UserProfile() {
   const loadProfile = async () => {
     setIsLoading(true)
     try {
-      const [profileResponse, statsResponse, followingResponse] = await Promise.all([
-        profileApi.getProfile(username),
-        followApi.getFollowStats(0), // Will be replaced with actual userId
-        currentUser ? followApi.checkFollowing(0) : Promise.resolve({ data: { isFollowing: false } })
-      ])
+      const profileResponse = await profileApi.getProfile(username)
 
       if (profileResponse.success && profileResponse.data) {
         const data: any = profileResponse.data
         setProfile(data.user || null)
         setDepartments(Array.isArray(data.departments) ? data.departments : [])
 
-        // Load follow stats with actual userId
         if (data.user) {
-          const statsRes = await followApi.getFollowStats(data.user.id)
+          const [statsRes, followRes] = await Promise.all([
+            followApi.getFollowStats(data.user.id),
+            currentUser && currentUser.userId !== data.user.id
+              ? followApi.checkFollowing(data.user.id)
+              : Promise.resolve({ data: { isFollowing: false } })
+          ])
+
           if (statsRes.data) {
             setFollowStats(statsRes.data as { followers_count: number; following_count: number })
           }
-
-          // Check if following
-          if (currentUser && currentUser.userId !== data.user.id) {
-            const followRes = await followApi.checkFollowing(data.user.id)
-            if (followRes.data) {
-              setIsFollowing((followRes.data as any).isFollowing || false)
-            }
+          if (followRes.data) {
+            setIsFollowing((followRes.data as any).isFollowing || false)
           }
         }
       } else {

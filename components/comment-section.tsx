@@ -2,7 +2,7 @@
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Card } from "@/components/ui/card"
 import { formatDistanceToNow } from "date-fns"
 import { Bold, Italic, Type } from "lucide-react"
@@ -36,6 +36,18 @@ export function CommentSection({ postId }: CommentSectionProps) {
   const [repliesMap, setRepliesMap] = useState<Record<number, Comment[]>>({})
   const [expandedComments, setExpandedComments] = useState<Set<number>>(new Set())
 
+  // Helper to safely format dates
+  const safeFormatDate = (dateString: string | undefined) => {
+    if (!dateString) return "Just now"
+    try {
+      const date = new Date(dateString)
+      if (isNaN(date.getTime())) return "Just now"
+      return formatDistanceToNow(date, { addSuffix: true })
+    } catch {
+      return "Just now"
+    }
+  }
+
   // Load comments
   useEffect(() => {
     loadComments()
@@ -48,7 +60,7 @@ export function CommentSection({ postId }: CommentSectionProps) {
         setComments(response.data.comments || [])
       }
     } catch (error) {
-      console.error("Failed to load comments:", error)
+      
     }
   }
 
@@ -108,7 +120,7 @@ export function CommentSection({ postId }: CommentSectionProps) {
         }))
       }
     } catch (error) {
-      console.error("Failed to load replies:", error)
+      
     }
   }
 
@@ -192,8 +204,16 @@ export function CommentSection({ postId }: CommentSectionProps) {
             <Card key={comment.id} className="p-3 bg-muted/30 border-border/50">
               <div className="flex gap-3">
                 <Avatar className="w-8 h-8 flex-shrink-0">
+                  {comment.author_avatar?.startsWith('/') ? (
+                    <AvatarImage 
+                      src={`http://localhost:5000${comment.author_avatar}`} 
+                      alt={comment.author_name} 
+                    />
+                  ) : null}
                   <AvatarFallback className="bg-primary text-primary-foreground text-xs">
-                    {comment.author_avatar}
+                    {comment.author_avatar && !comment.author_avatar.startsWith('/') 
+                      ? comment.author_avatar 
+                      : comment.author_name?.charAt(0) || '?'}
                   </AvatarFallback>
                 </Avatar>
 
@@ -202,7 +222,7 @@ export function CommentSection({ postId }: CommentSectionProps) {
                     <span className="font-medium text-sm">{comment.author_name}</span>
                     <span className="text-xs text-muted-foreground">{comment.author_username}</span>
                     <span className="text-xs text-muted-foreground">
-                      {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true })}
+                      {safeFormatDate(comment.created_at)}
                     </span>
                   </div>
 
@@ -266,15 +286,23 @@ export function CommentSection({ postId }: CommentSectionProps) {
                       {repliesMap[Number(comment.id)].map((reply) => (
                         <div key={reply.id} className="flex gap-2">
                           <Avatar className="w-6 h-6 flex-shrink-0">
+                            {reply.author_avatar?.startsWith('/') ? (
+                              <AvatarImage 
+                                src={`http://localhost:5000${reply.author_avatar}`} 
+                                alt={reply.author_name} 
+                              />
+                            ) : null}
                             <AvatarFallback className="bg-primary text-primary-foreground text-xs">
-                              {reply.author_avatar}
+                              {reply.author_avatar && !reply.author_avatar.startsWith('/') 
+                                ? reply.author_avatar 
+                                : reply.author_name?.charAt(0) || '?'}
                             </AvatarFallback>
                           </Avatar>
                           <div className="flex-1">
                             <div className="flex items-center gap-2">
                               <span className="font-medium text-xs">{reply.author_name}</span>
                               <span className="text-xs text-muted-foreground">
-                                {formatDistanceToNow(new Date(reply.created_at), { addSuffix: true })}
+                                {safeFormatDate(reply.created_at)}
                               </span>
                             </div>
                             <p className={`text-xs mt-1 ${reply.is_bold ? "font-semibold" : ""} ${reply.is_italic ? "italic" : ""}`}>

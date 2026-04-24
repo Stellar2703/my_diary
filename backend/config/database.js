@@ -1,30 +1,37 @@
-import mysql from 'mysql2/promise';
+import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import logger from './logger.js';
 
 dotenv.config();
 
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 3306,
-  user: process.env.DB_USER || 'admin',
-  password: process.env.DB_PASSWORD || 'admin',
-  database: process.env.DB_NAME || 'test',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  enableKeepAlive: true,
-  keepAliveInitialDelay: 0
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/peekhour';
+
+const connectDB = async () => {
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    logger.info('✅ MongoDB connected successfully', { uri: MONGODB_URI });
+  } catch (err) {
+    logger.error('❌ MongoDB connection error:', { error: err.message });
+    process.exit(1);
+  }
+};
+
+// Handle connection events
+mongoose.connection.on('disconnected', () => {
+  logger.warn('⚠️ MongoDB disconnected');
 });
 
-// Test the connection
-pool.getConnection()
-  .then(connection => {
-    console.log('✅ MySQL Database connected successfully');
-    connection.release();
-  })
-  .catch(err => {
-    console.error('❌ Database connection failed:', err.message);
-    process.exit(1);
-  });
+mongoose.connection.on('error', (err) => {
+  logger.error('❌ MongoDB error:', { error: err.message });
+});
 
-export default pool;
+process.on('SIGINT', async () => {
+  await mongoose.connection.close();
+  logger.info('MongoDB connection closed');
+  process.exit(0);
+});
+
+export default connectDB;

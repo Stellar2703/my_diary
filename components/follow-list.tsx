@@ -78,7 +78,7 @@ export default function FollowList({ userId, username }: FollowListProps) {
         setStats(statsRes.data as { followers_count: number; following_count: number });
       }
     } catch (error) {
-      console.error('Error loading follow data:', error);
+      
     } finally {
       setIsLoading(false);
     }

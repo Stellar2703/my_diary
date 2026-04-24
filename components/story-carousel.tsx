@@ -92,7 +92,7 @@ export default function StoryCarousel({ onCreateStory }: StoryCarouselProps) {
       try {
         await storiesApi.viewStory(story.id);
       } catch (error) {
-        console.error('Failed to mark story as viewed');
+        
       }
     }
   };

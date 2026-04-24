@@ -1,4 +1,5 @@
-import db from '../config/database.js';
+import { Department, Post, User } from '../models/index.js';
+import mongoose from 'mongoose';
 
 // Create a new department
 export const createDepartment = async (req, res) => {
@@ -6,30 +7,33 @@ export const createDepartment = async (req, res) => {
     const { name, type, description, location, country, state, city } = req.body;
     const userId = req.user.id;
 
-    // Insert department
-    const [result] = await db.query(
-      `INSERT INTO departments (name, type, description, location, country, state, city, created_by) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [name, type, description || null, location || null, country || null, state || null, city || null, userId]
-    );
-
-    const departmentId = result.insertId;
-
-    // Auto-join creator as admin
-    await db.query(
-      `INSERT INTO department_members (department_id, user_id, role) VALUES (?, ?, 'admin')`,
-      [departmentId, userId]
-    );
+    // Create department with creator as admin
+    const department = await Department.create({
+      name,
+      type,
+      description,
+      location,
+      country,
+      state,
+      city,
+      createdBy: userId,
+      isActive: true,
+      members: [{
+        userId,
+        role: 'admin',
+        joinedAt: new Date()
+      }]
+    });
 
     res.status(201).json({
       success: true,
       message: 'Department created successfully',
       data: {
-        departmentId
+        departmentId: department._id
       }
     });
   } catch (error) {
-    console.error('Create department error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to create department',
@@ -42,91 +46,66 @@ export const createDepartment = async (req, res) => {
 export const getDepartments = async (req, res) => {
   try {
     const { type, search, page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    let whereConditions = ['d.is_active = TRUE'];
-    let queryParams = [];
+    const query = { isActive: true };
 
     if (type) {
-      whereConditions.push('d.type = ?');
-      queryParams.push(type);
+      query.type = type;
     }
 
     if (search) {
-      whereConditions.push('d.name LIKE ?');
-      queryParams.push(`%${search}%`);
+      query.name = new RegExp(search, 'i');
     }
 
-    const whereClause = whereConditions.join(' AND ');
+    // Get departments with creator info
+    let departments = await Department.find(query)
+      .populate('createdBy', 'name username')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
 
-    // Get departments with statistics
-    const [departments] = await db.query(
-      `SELECT 
-        d.*,
-        u.name as creator_name,
-        u.username as creator_username,
-        ds.members_count,
-        ds.posts_count
-       FROM departments d
-       INNER JOIN users u ON d.created_by = u.id
-       LEFT JOIN department_statistics ds ON d.id = ds.department_id
-       WHERE ${whereClause}
-       ORDER BY d.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [...queryParams, parseInt(limit), offset]
-    );
+    // Add statistics and membership info
+    departments = await Promise.all(departments.map(async (dept) => {
+      const memberCount = dept.members?.length || 0;
+      const postCount = await Post.countDocuments({ departmentId: dept._id, isActive: true });
+      
+      let isMember = false;
+      if (req.user) {
+        isMember = dept.members?.some(m => m.userId.toString() === req.user.id) || false;
+      }
 
-    // Check if current user is a member (if authenticated)
-    if (req.user && departments.length > 0) {
-      const departmentIds = departments.map(d => d.id);
-      const placeholders = departmentIds.map(() => '?').join(',');
-      const [memberships] = await db.query(
-        `SELECT department_id FROM department_members WHERE user_id = ? AND department_id IN (${placeholders})`,
-        [req.user.id, ...departmentIds]
-      );
-
-      const memberDeptIds = new Set(memberships.map(m => m.department_id));
-      departments.forEach(dept => {
-        dept.is_member = memberDeptIds.has(dept.id);
-        dept.member_count = dept.members_count || 0;
-        dept.post_count = dept.posts_count || 0;
-        // Clean up alternative names
-        delete dept.members_count;
-        delete dept.posts_count;
-      });
-    } else {
-      // For non-authenticated users, set is_member to false
-      departments.forEach(dept => {
-        dept.is_member = false;
-        dept.member_count = dept.members_count || 0;
-        dept.post_count = dept.posts_count || 0;
-        delete dept.members_count;
-        delete dept.posts_count;
-      });
-    }
+      return {
+        ...dept,
+        id: dept._id.toString(),
+        creator_name: dept.createdBy?.name,
+        creator_username: dept.createdBy?.username,
+        member_count: memberCount,
+        post_count: postCount,
+        is_member: isMember
+      };
+    }));
 
     // Get total count
-    const [countResult] = await db.query(
-      `SELECT COUNT(*) as total FROM departments d WHERE ${whereClause}`,
-      queryParams
-    );
-
-    const total = countResult[0].total;
+    const total = await Department.countDocuments(query);
 
     res.json({
       success: true,
       data: {
         departments,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
+          page: pageNum,
+          limit: limitNum,
           total,
-          totalPages: Math.ceil(total / limit)
+          totalPages: Math.ceil(total / limitNum)
         }
       }
     });
   } catch (error) {
-    console.error('Get departments error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch departments',
@@ -140,46 +119,52 @@ export const getDepartmentById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const [departments] = await db.query(
-      `SELECT 
-        d.*,
-        u.name as creator_name,
-        u.username as creator_username,
-        ds.members_count,
-        ds.posts_count
-       FROM departments d
-       INNER JOIN users u ON d.created_by = u.id
-       LEFT JOIN department_statistics ds ON d.id = ds.department_id
-       WHERE d.id = ? AND d.is_active = TRUE`,
-      [id]
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid department ID'
+      });
+    }
 
-    if (departments.length === 0) {
+    const department = await Department.findOne({ _id: id, isActive: true })
+      .populate('createdBy', 'name username')
+      .lean();
+
+    if (!department) {
       return res.status(404).json({
         success: false,
         message: 'Department not found'
       });
     }
 
-    const department = departments[0];
+    // Add statistics
+    const memberCount = department.members?.length || 0;
+    const postCount = await Post.countDocuments({ departmentId: department._id, isActive: true });
 
     // Check if current user is a member
+    let isJoined = false;
+    let userRole = null;
     if (req.user) {
-      const [membership] = await db.query(
-        `SELECT role FROM department_members WHERE user_id = ? AND department_id = ?`,
-        [req.user.id, id]
-      );
-
-      department.isJoined = membership.length > 0;
-      department.userRole = membership.length > 0 ? membership[0].role : null;
+      const member = department.members?.find(m => m.userId.toString() === req.user.id);
+      isJoined = !!member;
+      userRole = member?.role || null;
     }
 
     res.json({
       success: true,
-      data: department
+      data: {
+        ...department,
+        id: department._id.toString(),
+        creator_name: department.createdBy?.name,
+        creator_username: department.createdBy?.username,
+        members_count: memberCount,
+        posts_count: postCount,
+        isJoined,
+        userRole
+      }
     });
   } catch (error) {
-    console.error('Get department error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch department',
@@ -194,13 +179,16 @@ export const joinDepartment = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    // Check if department exists and get creator
-    const [departments] = await db.query(
-      'SELECT id, created_by FROM departments WHERE id = ? AND is_active = TRUE',
-      [id]
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid department ID'
+      });
+    }
 
-    if (departments.length === 0) {
+    const department = await Department.findOne({ _id: id, isActive: true });
+
+    if (!department) {
       return res.status(404).json({
         success: false,
         message: 'Department not found'
@@ -208,7 +196,7 @@ export const joinDepartment = async (req, res) => {
     }
 
     // Prevent joining own department (creator is auto-member as admin)
-    if (departments[0].created_by === userId) {
+    if (department.createdBy.toString() === userId) {
       return res.status(400).json({
         success: false,
         message: 'You are the creator of this department'
@@ -216,12 +204,8 @@ export const joinDepartment = async (req, res) => {
     }
 
     // Check if already a member
-    const [existing] = await db.query(
-      'SELECT id FROM department_members WHERE user_id = ? AND department_id = ?',
-      [userId, id]
-    );
-
-    if (existing.length > 0) {
+    const isMember = department.members.some(m => m.userId.toString() === userId);
+    if (isMember) {
       return res.status(400).json({
         success: false,
         message: 'Already a member of this department'
@@ -229,17 +213,22 @@ export const joinDepartment = async (req, res) => {
     }
 
     // Join department
-    await db.query(
-      `INSERT INTO department_members (department_id, user_id, role) VALUES (?, ?, 'member')`,
-      [id, userId]
-    );
+    await Department.findByIdAndUpdate(id, {
+      $push: {
+        members: {
+          userId,
+          role: 'member',
+          joinedAt: new Date()
+        }
+      }
+    });
 
     res.json({
       success: true,
       message: 'Joined department successfully'
     });
   } catch (error) {
-    console.error('Join department error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to join department',
@@ -254,13 +243,24 @@ export const leaveDepartment = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    // Check if member
-    const [membership] = await db.query(
-      'SELECT role FROM department_members WHERE user_id = ? AND department_id = ?',
-      [userId, id]
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid department ID'
+      });
+    }
 
-    if (membership.length === 0) {
+    const department = await Department.findById(id);
+
+    if (!department) {
+      return res.status(404).json({
+        success: false,
+        message: 'Department not found'
+      });
+    }
+
+    const member = department.members.find(m => m.userId.toString() === userId);
+    if (!member) {
       return res.status(400).json({
         success: false,
         message: 'Not a member of this department'
@@ -268,13 +268,9 @@ export const leaveDepartment = async (req, res) => {
     }
 
     // Don't allow admin to leave if they're the only admin
-    if (membership[0].role === 'admin') {
-      const [adminCount] = await db.query(
-        `SELECT COUNT(*) as count FROM department_members WHERE department_id = ? AND role = 'admin'`,
-        [id]
-      );
-
-      if (adminCount[0].count <= 1) {
+    if (member.role === 'admin') {
+      const adminCount = department.members.filter(m => m.role === 'admin').length;
+      if (adminCount <= 1) {
         return res.status(400).json({
           success: false,
           message: 'Cannot leave - you are the only admin. Transfer ownership first.'
@@ -283,17 +279,18 @@ export const leaveDepartment = async (req, res) => {
     }
 
     // Leave department
-    await db.query(
-      'DELETE FROM department_members WHERE user_id = ? AND department_id = ?',
-      [userId, id]
-    );
+    await Department.findByIdAndUpdate(id, {
+      $pull: {
+        members: { userId }
+      }
+    });
 
     res.json({
       success: true,
       message: 'Left department successfully'
     });
   } catch (error) {
-    console.error('Leave department error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to leave department',
@@ -307,44 +304,67 @@ export const getDepartmentMembers = async (req, res) => {
   try {
     const { id } = req.params;
     const { page = 1, limit = 20 } = req.query;
-    const offset = (page - 1) * limit;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    const [members] = await db.query(
-      `SELECT 
-        dm.id,
-        dm.role,
-        dm.joined_at,
-        u.id as user_id,
-        u.name,
-        u.username,
-        u.profile_avatar
-       FROM department_members dm
-       INNER JOIN users u ON dm.user_id = u.id
-       WHERE dm.department_id = ?
-       ORDER BY dm.joined_at DESC
-       LIMIT ? OFFSET ?`,
-      [id, parseInt(limit), offset]
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid department ID'
+      });
+    }
 
-    const [countResult] = await db.query(
-      'SELECT COUNT(*) as total FROM department_members WHERE department_id = ?',
-      [id]
-    );
+    const department = await Department.findById(id).lean();
+
+    if (!department) {
+      return res.status(404).json({
+        success: false,
+        message: 'Department not found'
+      });
+    }
+
+    // Get paginated members with user info
+    const totalMembers = department.members.length;
+    const paginatedMemberIds = department.members
+      .slice(skip, skip + limitNum)
+      .map(m => m.userId);
+
+    const users = await User.find({ _id: { $in: paginatedMemberIds } })
+      .select('name username profileAvatar')
+      .lean();
+
+    const userMap = {};
+    users.forEach(u => {
+      userMap[u._id.toString()] = u;
+    });
+
+    const members = department.members
+      .slice(skip, skip + limitNum)
+      .map(m => ({
+        id: m.userId.toString(),
+        role: m.role,
+        joined_at: m.joinedAt,
+        user_id: m.userId,
+        name: userMap[m.userId.toString()]?.name,
+        username: userMap[m.userId.toString()]?.username,
+        profile_avatar: userMap[m.userId.toString()]?.profileAvatar
+      }));
 
     res.json({
       success: true,
       data: {
         members,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: countResult[0].total,
-          totalPages: Math.ceil(countResult[0].total / limit)
+          page: pageNum,
+          limit: limitNum,
+          total: totalMembers,
+          totalPages: Math.ceil(totalMembers / limitNum)
         }
       }
     });
   } catch (error) {
-    console.error('Get department members error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch department members',
@@ -358,19 +378,25 @@ export const getDepartmentPosts = async (req, res) => {
   try {
     const { id } = req.params;
     const { page = 1, limit = 10 } = req.query;
-    const offset = (page - 1) * limit;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid department ID'
+      });
+    }
 
     // Check if user is member or creator (for access control)
     let hasAccess = false;
     if (req.user) {
-      const [membership] = await db.query(
-        `SELECT dm.id FROM department_members dm
-         WHERE dm.user_id = ? AND dm.department_id = ?
-         UNION
-         SELECT d.id FROM departments d WHERE d.created_by = ? AND d.id = ?`,
-        [req.user.id, id, req.user.id, id]
-      );
-      hasAccess = membership.length > 0;
+      const department = await Department.findById(id);
+      if (department) {
+        hasAccess = department.members.some(m => m.userId.toString() === req.user.id) ||
+                   department.createdBy.toString() === req.user.id;
+      }
     }
 
     if (!hasAccess) {
@@ -381,68 +407,48 @@ export const getDepartmentPosts = async (req, res) => {
     }
 
     // Get posts from this department
-    const [posts] = await db.query(
-      `SELECT 
-        p.*,
-        u.name as author_name,
-        u.username as author_username,
-        u.profile_avatar as author_avatar,
-        d.name as department_name,
-        ps.likes_count,
-        ps.comments_count,
-        ps.shares_count
-       FROM posts p
-       INNER JOIN users u ON p.user_id = u.id
-       LEFT JOIN departments d ON p.department_id = d.id
-       LEFT JOIN post_statistics ps ON p.id = ps.post_id
-       WHERE p.department_id = ? AND p.is_active = TRUE
-       ORDER BY p.created_at DESC
-       LIMIT ? OFFSET ?`,
-      [id, parseInt(limit), offset]
-    );
+    const posts = await Post.find({ departmentId: id, isActive: true })
+      .populate('userId', 'name username profileAvatar')
+      .populate('departmentId', 'name')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
 
     // Get total count
-    const [countResult] = await db.query(
-      `SELECT COUNT(*) as total FROM posts 
-       WHERE department_id = ? AND is_active = TRUE`,
-      [id]
-    );
+    const total = await Post.countDocuments({ departmentId: id, isActive: true });
 
-    // Check if current user liked/shared posts
-    if (req.user && posts.length > 0) {
-      const postIds = posts.map(p => p.id);
-      const [userLikes] = await db.query(
-        `SELECT post_id FROM post_likes WHERE user_id = ? AND post_id IN (?)`,
-        [req.user.id, postIds]
-      );
-      const [userShares] = await db.query(
-        `SELECT post_id FROM post_shares WHERE user_id = ? AND post_id IN (?)`,
-        [req.user.id, postIds]
-      );
-
-      const likedIds = new Set(userLikes.map(l => l.post_id));
-      const sharedIds = new Set(userShares.map(s => s.post_id));
-
-      posts.forEach(post => {
-        post.isLikedByUser = likedIds.has(post.id);
-        post.isSharedByUser = sharedIds.has(post.id);
-      });
-    }
+    // Enrich posts with statistics
+    const enrichedPosts = posts.map(post => ({
+      ...post,
+      id: post._id.toString(),
+      author_name: post.userId?.name,
+      author_username: post.userId?.username,
+      author_avatar: post.userId?.profileAvatar,
+      department_name: post.departmentId?.name,
+      post_date: post.createdAt,
+      media_url: post.mediaUrl,
+      media_type: post.mediaType,
+      likes_count: post.likes?.length || 0,
+      shares_count: post.shares?.length || 0,
+      isLikedByUser: req.user ? post.likes?.some(l => l.userId.toString() === req.user.id) : false,
+      isSharedByUser: req.user ? post.shares?.some(s => s.userId.toString() === req.user.id) : false
+    }));
 
     res.json({
       success: true,
       data: {
-        posts,
+        posts: enrichedPosts,
         pagination: {
-          page: parseInt(page),
-          limit: parseInt(limit),
-          total: countResult[0].total,
-          totalPages: Math.ceil(countResult[0].total / limit)
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages: Math.ceil(total / limitNum)
         }
       }
     });
   } catch (error) {
-    console.error('Get department posts error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch department posts',
@@ -458,55 +464,51 @@ export const updateDepartment = async (req, res) => {
     const { name, description, location } = req.body;
     const userId = req.user.id;
 
-    // Check if user is admin of department
-    const [membership] = await db.query(
-      'SELECT role FROM department_members WHERE user_id = ? AND department_id = ?',
-      [userId, id]
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid department ID'
+      });
+    }
 
-    if (membership.length === 0 || membership[0].role !== 'admin') {
+    const department = await Department.findById(id);
+
+    if (!department) {
+      return res.status(404).json({
+        success: false,
+        message: 'Department not found'
+      });
+    }
+
+    // Check if user is admin of department
+    const member = department.members.find(m => m.userId.toString() === userId);
+    if (!member || member.role !== 'admin') {
       return res.status(403).json({
         success: false,
         message: 'Not authorized - admin access required'
       });
     }
 
-    const updates = [];
-    const values = [];
+    const updates = {};
+    if (name) updates.name = name;
+    if (description !== undefined) updates.description = description;
+    if (location !== undefined) updates.location = location;
 
-    if (name) {
-      updates.push('name = ?');
-      values.push(name);
-    }
-    if (description !== undefined) {
-      updates.push('description = ?');
-      values.push(description);
-    }
-    if (location !== undefined) {
-      updates.push('location = ?');
-      values.push(location);
-    }
-
-    if (updates.length === 0) {
+    if (Object.keys(updates).length === 0) {
       return res.status(400).json({
         success: false,
         message: 'No fields to update'
       });
     }
 
-    values.push(id);
-
-    await db.query(
-      `UPDATE departments SET ${updates.join(', ')} WHERE id = ?`,
-      values
-    );
+    await Department.findByIdAndUpdate(id, updates);
 
     res.json({
       success: true,
       message: 'Department updated successfully'
     });
   } catch (error) {
-    console.error('Update department error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to update department',
@@ -521,13 +523,25 @@ export const deleteDepartment = async (req, res) => {
     const { id } = req.params;
     const userId = req.user.id;
 
-    // Check if user is admin of department
-    const [membership] = await db.query(
-      'SELECT role FROM department_members WHERE user_id = ? AND department_id = ?',
-      [userId, id]
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid department ID'
+      });
+    }
 
-    if (membership.length === 0 || membership[0].role !== 'admin') {
+    const department = await Department.findById(id);
+
+    if (!department) {
+      return res.status(404).json({
+        success: false,
+        message: 'Department not found'
+      });
+    }
+
+    // Check if user is admin of department
+    const member = department.members.find(m => m.userId.toString() === userId);
+    if (!member || member.role !== 'admin') {
       return res.status(403).json({
         success: false,
         message: 'Not authorized - admin access required'
@@ -535,20 +549,77 @@ export const deleteDepartment = async (req, res) => {
     }
 
     // Soft delete
-    await db.query(
-      'UPDATE departments SET is_active = FALSE WHERE id = ?',
-      [id]
-    );
+    await Department.findByIdAndUpdate(id, { isActive: false });
 
     res.json({
       success: true,
       message: 'Department deleted successfully'
     });
   } catch (error) {
-    console.error('Delete department error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to delete department',
+      error: error.message
+    });
+  }
+};
+
+// Upload/update department avatar
+export const uploadDepartmentAvatar = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid department ID'
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded'
+      });
+    }
+
+    // Check if user is admin of the department
+    const department = await Department.findById(id);
+
+    if (!department) {
+      return res.status(404).json({
+        success: false,
+        message: 'Department not found'
+      });
+    }
+
+    const member = department.members.find(m => m.userId.toString() === userId);
+    if (!member || member.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized - admin access required'
+      });
+    }
+
+    // Update department avatar
+    const avatarPath = `/uploads/avatars/${req.file.filename}`;
+    department.avatar = avatarPath;
+    await department.save();
+
+    res.json({
+      success: true,
+      message: 'Department avatar uploaded successfully',
+      data: {
+        avatar: department.avatar
+      }
+    });
+  } catch (error) {
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload department avatar',
       error: error.message
     });
   }

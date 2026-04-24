@@ -9,10 +9,12 @@ import {
   getDepartmentMembers,
   getDepartmentPosts,
   updateDepartment,
-  deleteDepartment
+  deleteDepartment,
+  uploadDepartmentAvatar
 } from '../controllers/departmentController.js';
 import { authenticate, optionalAuth } from '../middleware/auth.js';
 import { validate } from '../middleware/validator.js';
+import { uploadAvatar } from '../middleware/upload.js';
 
 const router = express.Router();
 
@@ -35,5 +37,6 @@ router.post('/:id/leave', authenticate, leaveDepartment);
 router.get('/:id/members', getDepartmentMembers);
 router.put('/:id', authenticate, updateDepartment);
 router.delete('/:id', authenticate, deleteDepartment);
+router.post('/:id/avatar', authenticate, uploadAvatar.single('avatar'), uploadDepartmentAvatar);
 
 export default router;

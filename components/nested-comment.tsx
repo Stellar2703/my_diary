@@ -83,7 +83,7 @@ export default function NestedComment({
         setShowReplies(true);
       }
     } catch (error) {
-      console.error('Error loading replies:', error);
+      
     } finally {
       setIsLoadingReplies(false);
     }

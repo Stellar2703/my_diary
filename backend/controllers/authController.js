@@ -1,13 +1,12 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import db from '../config/database.js';
-import path from 'path';
+import User from '../models/User.js';
 
 // Generate JWT Token
 const generateToken = (user) => {
   return jwt.sign(
     { 
-      id: user.id, 
+      id: user._id.toString(), 
       username: user.username,
       email: user.email 
     },
@@ -22,12 +21,15 @@ export const register = async (req, res) => {
     const { name, username, email, mobileNumber, password } = req.body;
     
     // Check if user already exists
-    const [existingUser] = await db.query(
-      'SELECT id FROM users WHERE username = ? OR email = ? OR mobile_number = ?',
-      [username, email, mobileNumber]
-    );
+    const existingUser = await User.findOne({
+      $or: [
+        { username: username.toLowerCase() },
+        { email: email.toLowerCase() },
+        { mobileNumber }
+      ]
+    });
 
-    if (existingUser.length > 0) {
+    if (existingUser) {
       return res.status(400).json({
         success: false,
         message: 'User with this username, email, or mobile number already exists'
@@ -38,40 +40,39 @@ export const register = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    // Get face image path if uploaded (optional for testing)
-    const faceImagePath = req.file ? `/uploads/faces/${req.file.filename}` : null;
-
     // Generate avatar initials
     const avatar = name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'U';
 
-    // Insert user (face_image_path is optional)
-    const [result] = await db.query(
-      `INSERT INTO users (name, username, email, mobile_number, password_hash, face_image_path, profile_avatar) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [name, username, email, mobileNumber, passwordHash, faceImagePath, avatar]
-    );
-
-    const userId = result.insertId;
+    // Create new user
+    const user = await User.create({
+      name,
+      username: username.toLowerCase(),
+      email: email.toLowerCase(),
+      mobileNumber,
+      passwordHash,
+      profileAvatar: avatar,
+      isActive: true
+    });
 
     // Generate token
-    const token = generateToken({ id: userId, username, email });
+    const token = generateToken(user);
 
     res.status(201).json({
       success: true,
       message: 'User registered successfully',
       data: {
         user: {
-          id: userId,
-          name,
-          username,
-          email,
-          avatar
+          id: user._id,
+          name: user.name,
+          username: user.username,
+          email: user.email,
+          avatar: user.profileAvatar
         },
         token
       }
     });
   } catch (error) {
-    console.error('Registration error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Registration failed',
@@ -86,22 +87,22 @@ export const login = async (req, res) => {
     const { username, password } = req.body;
 
     // Find user
-    const [users] = await db.query(
-      'SELECT id, name, username, email, password_hash, profile_avatar, is_active FROM users WHERE username = ? OR email = ?',
-      [username, username]
-    );
+    const user = await User.findOne({
+      $or: [
+        { username: username.toLowerCase() },
+        { email: username.toLowerCase() }
+      ]
+    }).select('+passwordHash');
 
-    if (users.length === 0) {
+    if (!user) {
       return res.status(401).json({
         success: false,
         message: 'Invalid credentials'
       });
     }
 
-    const user = users[0];
-
     // Check if user is active
-    if (!user.is_active) {
+    if (!user.isActive) {
       return res.status(403).json({
         success: false,
         message: 'Account is disabled'
@@ -109,7 +110,7 @@ export const login = async (req, res) => {
     }
 
     // Verify password
-    const isPasswordValid = await bcrypt.compare(password, user.password_hash);
+    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
 
     if (!isPasswordValid) {
       return res.status(401).json({
@@ -117,6 +118,10 @@ export const login = async (req, res) => {
         message: 'Invalid credentials'
       });
     }
+
+    // Update last login
+    user.lastLoginAt = new Date();
+    await user.save();
 
     // Generate token
     const token = generateToken(user);
@@ -126,17 +131,17 @@ export const login = async (req, res) => {
       message: 'Login successful',
       data: {
         user: {
-          id: user.id,
+          id: user._id,
           name: user.name,
           username: user.username,
           email: user.email,
-          avatar: user.profile_avatar
+          avatar: user.profileAvatar
         },
         token
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Login failed',
@@ -148,13 +153,11 @@ export const login = async (req, res) => {
 // Get current user profile
 export const getProfile = async (req, res) => {
   try {
-    const [users] = await db.query(
-      `SELECT id, name, username, email, mobile_number, profile_avatar, face_image_path, created_at 
-       FROM users WHERE id = ?`,
-      [req.user.id]
-    );
+    const user = await User.findById(req.user.id)
+      .select('-passwordHash -twoFactorSecret')
+      .lean();
 
-    if (users.length === 0) {
+    if (!user) {
       return res.status(404).json({
         success: false,
         message: 'User not found'
@@ -163,10 +166,10 @@ export const getProfile = async (req, res) => {
 
     res.json({
       success: true,
-      data: users[0]
+      data: user
     });
   } catch (error) {
-    console.error('Get profile error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to fetch profile',
@@ -178,48 +181,93 @@ export const getProfile = async (req, res) => {
 // Update user profile
 export const updateProfile = async (req, res) => {
   try {
-    const { name, email, mobileNumber } = req.body;
+    const { name, email, mobileNumber, bio, dateOfBirth, gender } = req.body;
     const userId = req.user.id;
 
-    const updates = [];
-    const values = [];
+    const updates = {};
 
-    if (name) {
-      updates.push('name = ?');
-      values.push(name);
-    }
-    if (email) {
-      updates.push('email = ?');
-      values.push(email);
-    }
-    if (mobileNumber) {
-      updates.push('mobile_number = ?');
-      values.push(mobileNumber);
-    }
+    if (name) updates.name = name;
+    if (email) updates.email = email.toLowerCase();
+    if (mobileNumber) updates.mobileNumber = mobileNumber;
+    if (bio !== undefined) updates.bio = bio;
+    if (dateOfBirth) updates.dateOfBirth = dateOfBirth;
+    if (gender) updates.gender = gender;
 
-    if (updates.length === 0) {
+    if (Object.keys(updates).length === 0) {
       return res.status(400).json({
         success: false,
         message: 'No fields to update'
       });
     }
 
-    values.push(userId);
+    const user = await User.findByIdAndUpdate(
+      userId,
+      updates,
+      { new: true, runValidators: true }
+    ).select('-passwordHash -twoFactorSecret');
 
-    await db.query(
-      `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
-      values
-    );
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
 
     res.json({
       success: true,
-      message: 'Profile updated successfully'
+      message: 'Profile updated successfully',
+      data: user
     });
   } catch (error) {
-    console.error('Update profile error:', error);
+    
     res.status(500).json({
       success: false,
       message: 'Failed to update profile',
+      error: error.message
+    });
+  }
+};
+
+// Upload/update user avatar
+export const uploadUserAvatar = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'No file uploaded'
+      });
+    }
+
+    // Update user's profileAvatar with the file path
+    const avatarPath = `/uploads/avatars/${req.file.filename}`;
+    
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { profileAvatar: avatarPath },
+      { new: true }
+    ).select('-passwordHash -twoFactorSecret');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Avatar uploaded successfully',
+      data: {
+        profileAvatar: user.profileAvatar
+      }
+    });
+  } catch (error) {
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload avatar',
       error: error.message
     });
   }
