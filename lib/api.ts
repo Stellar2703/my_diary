@@ -51,10 +51,18 @@ async function apiCall<T>(
     const data = await response.json();
 
     if (!response.ok) {
+      // Format validation errors for display
+      let errorMessage = data.message || 'API request failed';
+      if (data.errors && Array.isArray(data.errors)) {
+        errorMessage = data.errors
+          .map((err: any) => `${err.field}: ${err.message}`)
+          .join(', ');
+      }
       return {
         success: false,
-        message: data.message || 'API request failed',
-        error: data.error || data.message || 'API request failed'
+        message: errorMessage,
+        error: errorMessage,
+        errors: data.errors
       };
     }
 
