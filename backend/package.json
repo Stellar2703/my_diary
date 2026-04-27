@@ -1,7 +1,7 @@
 {
-  "name": "peekhour-backend",
+  "name": "my-diary-backend",
   "version": "1.0.0",
-  "description": "Backend API for PeekHour - Location-based social media platform",
+  "description": "Backend API for my diary - Location-based social media platform",
   "main": "server.js",
   "type": "module",
   "scripts": {

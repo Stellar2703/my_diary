@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
+import { User } from '../models/index.js';
 
 dotenv.config();
 
@@ -17,12 +18,22 @@ export const authenticate = async (req, res, next) => {
 
     // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Fetch latest user state for permission checks
+    const dbUser = await User.findById(decoded.id).select('_id username email role isActive').lean();
+    if (!dbUser || !dbUser.isActive) {
+      return res.status(403).json({
+        success: false,
+        message: 'Account is disabled.'
+      });
+    }
     
     // Add user info to request
     req.user = {
-      id: decoded.id,
-      username: decoded.username,
-      email: decoded.email
+      id: dbUser._id.toString(),
+      username: dbUser.username,
+      email: dbUser.email,
+      role: dbUser.role || 'user'
     };
 
     next();
@@ -52,11 +63,15 @@ export const optionalAuth = async (req, res, next) => {
 
     if (token) {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = {
-        id: decoded.id,
-        username: decoded.username,
-        email: decoded.email
-      };
+      const dbUser = await User.findById(decoded.id).select('_id username email role isActive').lean();
+      if (dbUser && dbUser.isActive) {
+        req.user = {
+          id: dbUser._id.toString(),
+          username: dbUser.username,
+          email: dbUser.email,
+          role: dbUser.role || 'user'
+        };
+      }
     }
 
     next();
@@ -64,4 +79,15 @@ export const optionalAuth = async (req, res, next) => {
     // If token is invalid or expired, just continue without user
     next();
   }
+};
+
+export const authorizeAdmin = (req, res, next) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      message: 'Admin access required.'
+    });
+  }
+
+  next();
 };

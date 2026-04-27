@@ -59,7 +59,7 @@ export function LoginForm() {
       <Card>
         <CardHeader>
           <CardTitle>Welcome Back</CardTitle>
-          <CardDescription>Login to your Peekhour account</CardDescription>
+          <CardDescription>Login to your my diary account</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">

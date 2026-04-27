@@ -30,6 +30,7 @@ import storyRoutes from './routes/storyRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
 import searchRoutes from './routes/searchRoutes.js';
 import moderationRoutes from './routes/moderationRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
 import securityRoutes from './routes/securityRoutes.js';
 import analyticsRoutes from './routes/analyticsRoutes.js';
 
@@ -101,6 +102,7 @@ app.use('/api/stories', storyRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/moderation', moderationRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/security', securityRoutes);
 app.use('/api/analytics', analyticsRoutes);
 
@@ -108,7 +110,7 @@ app.use('/api/analytics', analyticsRoutes);
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
-    message: 'PeekHour API is running',
+    message: 'my diary API is running',
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development'
   });
@@ -118,7 +120,7 @@ app.get('/api/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'Welcome to PeekHour API',
+    message: 'Welcome to my diary API',
     version: '1.0.0',
     endpoints: {
       auth: '/api/auth',
@@ -140,7 +142,7 @@ const PORT = process.env.PORT || 5000;
 
 connectDB().then(() => {
   server.listen(PORT, () => {
-    logger.info('🚀 PeekHour API Server Started', {
+    logger.info('🚀 my diary API Server Started', {
       port: PORT,
       environment: process.env.NODE_ENV || 'development',
       apiUrl: `http://localhost:${PORT}`,

@@ -790,3 +790,125 @@ export const notificationsApi = {
   },
 };
 
+export const moderationApi = {
+  getReports: async (params?: { status?: string; targetType?: string; page?: number; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.append('status', params.status);
+    if (params?.targetType) qs.append('targetType', params.targetType);
+    if (params?.page) qs.append('page', String(params.page));
+    if (params?.limit) qs.append('limit', String(params.limit));
+    return apiCall(`/moderation/reports${qs.toString() ? `?${qs.toString()}` : ''}`, {
+      method: 'GET',
+    });
+  },
+
+  reviewReport: async (reportId: string, action: 'dismiss' | 'remove_content' | 'ban_user', notes?: string) => {
+    return apiCall(`/moderation/reports/${reportId}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ action, notes }),
+    });
+  },
+
+  getLogs: async (page = 1, limit = 50) => {
+    return apiCall(`/moderation/logs?page=${page}&limit=${limit}`, {
+      method: 'GET',
+    });
+  },
+
+  banUser: async (userId: string, reason: string, duration?: number) => {
+    return apiCall(`/moderation/users/${userId}/ban`, {
+      method: 'POST',
+      body: JSON.stringify({ reason, duration }),
+    });
+  },
+
+  unbanUser: async (userId: string) => {
+    return apiCall(`/moderation/users/${userId}/unban`, {
+      method: 'POST',
+    });
+  },
+};
+
+export const adminApi = {
+  getDashboard: async () => {
+    return apiCall('/admin/dashboard', {
+      method: 'GET',
+    });
+  },
+
+  getUsers: async (params?: {
+    query?: string;
+    role?: 'all' | 'user' | 'moderator' | 'admin';
+    status?: 'all' | 'active' | 'disabled';
+    page?: number;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.query) qs.append('query', params.query);
+    if (params?.role) qs.append('role', params.role);
+    if (params?.status) qs.append('status', params.status);
+    if (params?.page) qs.append('page', String(params.page));
+    if (params?.limit) qs.append('limit', String(params.limit));
+    return apiCall(`/admin/users${qs.toString() ? `?${qs.toString()}` : ''}`, {
+      method: 'GET',
+    });
+  },
+
+  updateUserRole: async (userId: string, role: 'user' | 'moderator' | 'admin') => {
+    return apiCall(`/admin/users/${userId}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    });
+  },
+
+  toggleUserStatus: async (userId: string) => {
+    return apiCall(`/admin/users/${userId}/status`, {
+      method: 'PATCH',
+    });
+  },
+
+  getPosts: async (params?: {
+    query?: string;
+    status?: 'all' | 'active' | 'inactive';
+    page?: number;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.query) qs.append('query', params.query);
+    if (params?.status) qs.append('status', params.status);
+    if (params?.page) qs.append('page', String(params.page));
+    if (params?.limit) qs.append('limit', String(params.limit));
+    return apiCall(`/admin/posts${qs.toString() ? `?${qs.toString()}` : ''}`, {
+      method: 'GET',
+    });
+  },
+
+  togglePostStatus: async (postId: string) => {
+    return apiCall(`/admin/posts/${postId}/status`, {
+      method: 'PATCH',
+    });
+  },
+
+  getDepartments: async (params?: {
+    query?: string;
+    status?: 'all' | 'active' | 'inactive';
+    page?: number;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.query) qs.append('query', params.query);
+    if (params?.status) qs.append('status', params.status);
+    if (params?.page) qs.append('page', String(params.page));
+    if (params?.limit) qs.append('limit', String(params.limit));
+    return apiCall(`/admin/departments${qs.toString() ? `?${qs.toString()}` : ''}`, {
+      method: 'GET',
+    });
+  },
+
+  toggleDepartmentStatus: async (departmentId: string) => {
+    return apiCall(`/admin/departments/${departmentId}/status`, {
+      method: 'PATCH',
+    });
+  },
+};
+

@@ -50,7 +50,7 @@ export function DepartmentPhotoTemplate({ name, type }: DepartmentPhotoTemplateP
           <ImageIcon className="h-5 w-5 text-white" />
         </div>
         <div className="space-y-0.5">
-          <p className="text-[10px] uppercase tracking-[0.32em] text-white/75">PeekHour</p>
+          <p className="text-[10px] uppercase tracking-[0.32em] text-white/75">my diary</p>
           <p className="text-xs font-semibold leading-tight text-white/95 line-clamp-2">{name}</p>
           <p className="text-[10px] text-white/75">{typeLabels[type]} Department</p>
         </div>

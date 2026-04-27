@@ -8,7 +8,8 @@ const generateToken = (user) => {
     { 
       id: user._id.toString(), 
       username: user.username,
-      email: user.email 
+      email: user.email,
+      role: user.role || 'user'
     },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRE || '7d' }
@@ -43,6 +44,8 @@ export const register = async (req, res) => {
     // Generate avatar initials
     const avatar = name ? name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'U';
 
+    const existingAdminCount = await User.countDocuments({ role: 'admin', isActive: true });
+
     // Create new user
     const user = await User.create({
       name,
@@ -51,6 +54,7 @@ export const register = async (req, res) => {
       mobileNumber,
       passwordHash,
       profileAvatar: avatar,
+      role: existingAdminCount === 0 ? 'admin' : 'user',
       isActive: true
     });
 
@@ -66,7 +70,9 @@ export const register = async (req, res) => {
           name: user.name,
           username: user.username,
           email: user.email,
-          avatar: user.profileAvatar
+          mobile: user.mobileNumber,
+          avatar: user.profileAvatar,
+          role: user.role || 'user'
         },
         token
       }
@@ -109,6 +115,15 @@ export const login = async (req, res) => {
       });
     }
 
+    // Legacy data compatibility and bootstrap first admin if needed
+    if (!user.role) {
+      user.role = 'user';
+    }
+    const activeAdminCount = await User.countDocuments({ role: 'admin', isActive: true });
+    if (activeAdminCount === 0) {
+      user.role = 'admin';
+    }
+
     // Verify password
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
 
@@ -135,7 +150,9 @@ export const login = async (req, res) => {
           name: user.name,
           username: user.username,
           email: user.email,
-          avatar: user.profileAvatar
+          mobile: user.mobileNumber,
+          avatar: user.profileAvatar,
+          role: user.role || 'user'
         },
         token
       }
@@ -166,7 +183,11 @@ export const getProfile = async (req, res) => {
 
     res.json({
       success: true,
-      data: user
+      data: {
+        ...user,
+        mobile: user.mobileNumber,
+        role: user.role || 'user'
+      }
     });
   } catch (error) {
     

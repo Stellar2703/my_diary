@@ -59,7 +59,7 @@ const getLogFormat = (includeColor = false) => {
 // Create logger
 const logger = winston.createLogger({
   level: LOG_LEVEL,
-  defaultMeta: { service: 'peekhour-api' },
+  defaultMeta: { service: 'my-diary-api' },
   transports: [
     // Console transport
     new winston.transports.Console({

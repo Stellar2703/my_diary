@@ -7,20 +7,20 @@ import {
   unbanUser,
   getModerationLogs,
 } from '../controllers/moderationController.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, authorizeAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
 // Reporting
 router.post('/reports', authenticate, createReport);
-router.get('/reports', authenticate, getReports); // Admin only
-router.post('/reports/:reportId/review', authenticate, reviewReport); // Admin only
+router.get('/reports', authenticate, authorizeAdmin, getReports);
+router.post('/reports/:reportId/review', authenticate, authorizeAdmin, reviewReport);
 
 // User banning
-router.post('/users/:userId/ban', authenticate, banUser); // Admin only
-router.post('/users/:userId/unban', authenticate, unbanUser); // Admin only
+router.post('/users/:userId/ban', authenticate, authorizeAdmin, banUser);
+router.post('/users/:userId/unban', authenticate, authorizeAdmin, unbanUser);
 
 // Logs
-router.get('/logs', authenticate, getModerationLogs); // Admin only
+router.get('/logs', authenticate, authorizeAdmin, getModerationLogs);
 
 export default router;

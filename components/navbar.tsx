@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { MapPin, Search, Home, Plus, Bell, Settings, LogOut, Users, Heart, MessageCircle } from "lucide-react"
+import { MapPin, Search, Home, Plus, Bell, Settings, LogOut, Users, Heart, MessageCircle, Shield } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { userApi } from "@/lib/api"
 import { UserSettingsDialog } from "./user-settings-dialog"
@@ -33,6 +33,7 @@ export function Navbar() {
   const [unreadCount, setUnreadCount] = useState(0)
 
   const isActive = (path: string) => pathname === path
+  const isSectionActive = (path: string) => pathname === path || pathname.startsWith(`${path}/`)
 
   // Load notifications
   useEffect(() => {
@@ -94,30 +95,34 @@ export function Navbar() {
   }
 
   return (
-    <nav className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
-      <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+    <>
+      <nav className="sticky top-0 z-50 bg-card border-b border-border shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
         {/* Logo */}
         <Link
           href="/"
           className="flex items-center gap-2 font-bold text-xl text-primary hover:opacity-80 transition-opacity"
         >
           <MapPin className="w-6 h-6" />
-          <span className="hidden sm:inline">Peekhour</span>
+          <span className="hidden sm:inline">my diary</span>
         </Link>
 
-        {/* Center Navigation */}
+          {/* Center Navigation */}
         <div className="hidden md:flex items-center gap-1">
           <NavLink href="/home" isActive={isActive("/home")} icon={<Home className="w-4 h-4" />} label="Home" />
           <NavLink href="/search" isActive={isActive("/search")} icon={<Search className="w-4 h-4" />} label="Search" />
           <NavLink
             href="/departments"
-            isActive={isActive("/departments")}
+            isActive={isSectionActive("/departments")}
             icon={<Users className="w-4 h-4" />}
             label="Departments"
           />
+          {user?.role === "admin" && (
+            <NavLink href="/admin" isActive={isSectionActive("/admin")} icon={<Shield className="w-4 h-4" />} label="Admin" />
+          )}
         </div>
 
-        {/* Right Actions */}
+          {/* Right Actions */}
         {isAuthenticated ? (
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" className="hidden sm:inline-flex" title="New Post" onClick={handleNewPost}>
@@ -206,7 +211,24 @@ export function Navbar() {
           </div>
         )}
       </div>
-    </nav>
+      </nav>
+
+      {isAuthenticated && (
+        <>
+          <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+            <div className={`grid ${user?.role === "admin" ? "grid-cols-4" : "grid-cols-3"} gap-1 p-2`}>
+              <MobileNavLink href="/home" isActive={isSectionActive("/home")} icon={<Home className="w-4 h-4" />} label="Home" />
+              <MobileNavLink href="/search" isActive={isSectionActive("/search")} icon={<Search className="w-4 h-4" />} label="Search" />
+              <MobileNavLink href="/departments" isActive={isSectionActive("/departments")} icon={<Users className="w-4 h-4" />} label="Departments" />
+              {user?.role === "admin" && (
+                <MobileNavLink href="/admin" isActive={isSectionActive("/admin")} icon={<Shield className="w-4 h-4" />} label="Admin" />
+              )}
+            </div>
+          </nav>
+          <div className="md:hidden h-20" />
+        </>
+      )}
+    </>
   )
 }
 
@@ -225,6 +247,25 @@ function NavLink({
     >
       {icon}
       <span className="hidden sm:inline text-sm font-medium">{label}</span>
+    </Link>
+  )
+}
+
+function MobileNavLink({
+  href,
+  isActive,
+  icon,
+  label,
+}: { href: string; isActive: boolean; icon: React.ReactNode; label: string }) {
+  return (
+    <Link
+      href={href}
+      className={`flex flex-col items-center justify-center gap-1 rounded-lg py-2 text-xs font-medium transition-colors ${
+        isActive ? "bg-primary text-primary-foreground" : "text-foreground hover:bg-muted"
+      }`}
+    >
+      {icon}
+      <span>{label}</span>
     </Link>
   )
 }

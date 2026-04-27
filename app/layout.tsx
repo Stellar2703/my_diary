@@ -11,7 +11,7 @@ const _geist = Geist({ subsets: ["latin"] })
 const _geistMono = Geist_Mono({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Peekhour - Location-Based Events & Discovery",
+  title: "my diary - Location-Based Events & Discovery",
   description: "Share and discover events, photos, and moments by location and date",
   generator: "v0.app",
   icons: {

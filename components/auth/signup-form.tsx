@@ -113,7 +113,7 @@ export function SignupForm() {
       <Card>
         <CardHeader>
           <CardTitle>Create Account</CardTitle>
-          <CardDescription>Join Peekhour to share and discover location-based events</CardDescription>
+          <CardDescription>Join my diary to share and discover location-based events</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">

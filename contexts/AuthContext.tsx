@@ -6,8 +6,8 @@ import { authApi, setAuthToken, removeAuthToken, getAuthToken } from '@/lib/api'
 import { toast } from 'sonner'
 
 interface User {
-  id: number
-  userId: number // Alias for id for backward compatibility
+  id: string
+  userId: string // Alias for id for backward compatibility
   name: string
   username: string
   email: string
@@ -52,13 +52,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (response.success && response.data) {
         const userData: any = response.data
         setUser({
-          id: userData.id,
-          userId: userData.id,
+          id: String(userData.id),
+          userId: String(userData.id),
           name: userData.name,
           username: userData.username,
           email: userData.email,
-          mobile: userData.mobile,
-          role: userData.role,
+          mobile: userData.mobile || userData.mobileNumber || "",
+          role: userData.role || "user",
           avatar: userData.avatar,
           bio: userData.bio,
         })
@@ -80,13 +80,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (response.success && response.data) {
         const { token, user: userData } = response.data as { token: string; user: any }
         const user: User = {
-          id: userData.id,
-          userId: userData.id,
+          id: String(userData.id),
+          userId: String(userData.id),
           name: userData.name,
           username: userData.username,
           email: userData.email,
-          mobile: userData.mobile,
-          role: userData.role,
+          mobile: userData.mobile || userData.mobileNumber || "",
+          role: userData.role || "user",
           avatar: userData.avatar,
           bio: userData.bio,
         }
@@ -111,13 +111,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (response.success && response.data) {
         const { token, user: userData } = response.data as { token: string; user: any }
         const user: User = {
-          id: userData.id,
-          userId: userData.id,
+          id: String(userData.id),
+          userId: String(userData.id),
           name: userData.name,
           username: userData.username,
           email: userData.email,
-          mobile: userData.mobile,
-          role: userData.role,
+          mobile: userData.mobile || userData.mobileNumber || "",
+          role: userData.role || "user",
           avatar: userData.avatar,
           bio: userData.bio,
         }
