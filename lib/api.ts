@@ -189,6 +189,13 @@ export const postsApi = {
     });
   },
 
+  shareToUser: async (id: string | number, recipientUserId: string) => {
+    return apiCall(`/posts/${id}/share-user`, {
+      method: 'POST',
+      body: JSON.stringify({ recipientUserId }),
+    });
+  },
+
   edit: async (id: string | number, content: string) => {
     return apiCall(`/posts/${id}/edit`, {
       method: 'PATCH',
@@ -400,6 +407,17 @@ export const commentsApi = {
 export const userApi = {
   getLocations: async () => {
     return apiCall('/user/locations', {
+      method: 'GET',
+    });
+  },
+
+  getShareRecipients: async (query = '', page = 1, limit = 20) => {
+    const params = new URLSearchParams({
+      query,
+      page: String(page),
+      limit: String(limit),
+    });
+    return apiCall(`/user/share-recipients?${params.toString()}`, {
       method: 'GET',
     });
   },

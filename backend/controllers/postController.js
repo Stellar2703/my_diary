@@ -662,3 +662,91 @@ export const toggleShare = async (req, res) => {
     });
   }
 };
+
+// Share post directly to a specific user
+export const sharePostToUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { recipientUserId } = req.body;
+    const senderUserId = req.user.id;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid post ID'
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(recipientUserId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid recipient user ID'
+      });
+    }
+
+    if (senderUserId.toString() === recipientUserId.toString()) {
+      return res.status(400).json({
+        success: false,
+        message: 'You cannot share a post with yourself'
+      });
+    }
+
+    const [post, recipient] = await Promise.all([
+      Post.findOne({ _id: id, isActive: true }),
+      User.findOne({ _id: recipientUserId, isActive: true }).select('_id')
+    ]);
+
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found'
+      });
+    }
+
+    if (!recipient) {
+      return res.status(404).json({
+        success: false,
+        message: 'Recipient user not found'
+      });
+    }
+
+    // Keep existing share counter behavior (unique sender shares)
+    const alreadySharedBySender = post.shares.some(
+      share => share.userId.toString() === senderUserId.toString()
+    );
+
+    if (!alreadySharedBySender) {
+      post.shares.push({
+        userId: senderUserId,
+        sharedAt: new Date()
+      });
+      await post.save();
+    }
+
+    await Notification.create({
+      userId: recipientUserId,
+      fromUserId: senderUserId,
+      type: 'share',
+      message: 'shared a post with you',
+      content: 'shared a post with you',
+      postId: post._id,
+      isRead: false,
+      isActive: true
+    });
+
+    return res.json({
+      success: true,
+      message: 'Post shared successfully',
+      data: {
+        postId: post._id.toString(),
+        recipientUserId
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to share post with user',
+      error: error.message
+    });
+  }
+};

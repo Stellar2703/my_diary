@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { DepartmentAvatar } from "./department-avatar"
 import { Users, MapPin, Settings } from "lucide-react"
 
 interface Department {
@@ -38,36 +38,19 @@ export function DepartmentCard({ department, onJoin, onViewDetails }: Department
     community: "bg-orange-100 text-orange-700",
   }
 
-  const getAvatarUrl = (avatar: string | undefined) => {
-    if (!avatar) return null;
-    if (avatar.startsWith('http')) return avatar;
-    if (avatar.startsWith('/')) return `http://localhost:5000${avatar}`;
-    if (avatar.startsWith('uploads/')) return `http://localhost:5000/${avatar}`;
-    // bare path like "avatars/xxx.jpg" – needs /uploads/ prefix
-    return `http://localhost:5000/uploads/${avatar}`;
-  };
-
-  const isImageAvatar = (avatar: string | undefined) =>
-    !!avatar && /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(avatar);
-
   return (
-    <Card className="overflow-hidden hover:shadow-md transition-shadow">
+    <Card className="overflow-hidden hover:shadow-md transition-shadow h-full">
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between">
-          <div className="flex items-start gap-3 flex-1">
-            <Avatar className="w-12 h-12">
-              {isImageAvatar(department.avatar) ? (
-                <AvatarImage 
-                  src={getAvatarUrl(department.avatar)!} 
-                  alt={department.name}
-                />
-              ) : null}
-              <AvatarFallback className={`text-xl ${deptColors[department.type]}`}>
-                {deptIcons[department.type]}
-              </AvatarFallback>
-            </Avatar>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 flex-1 min-w-0">
+            <DepartmentAvatar
+              avatar={department.avatar}
+              name={department.name}
+              type={department.type}
+              className="w-12 h-12 shrink-0"
+            />
             <div className="flex-1 min-w-0">
-              <CardTitle className="text-base">{department.name}</CardTitle>
+              <CardTitle className="text-base line-clamp-1">{department.name}</CardTitle>
               <p className={`text-xs px-2 py-0.5 rounded-full inline-block mt-1 ${deptColors[department.type]}`}>
                 {department.type.charAt(0).toUpperCase() + department.type.slice(1)}
               </p>
@@ -87,7 +70,7 @@ export function DepartmentCard({ department, onJoin, onViewDetails }: Department
         )}
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-3 py-2 border-y border-border">
+        <div className="grid grid-cols-3 gap-2 sm:gap-3 py-2 border-y border-border">
           <div className="text-center">
             <p className="font-semibold text-sm">{department.members}</p>
             <p className="text-xs text-muted-foreground">Members</p>
@@ -103,19 +86,19 @@ export function DepartmentCard({ department, onJoin, onViewDetails }: Department
         </div>
 
         {/* Action Buttons */}
-        <div className="flex gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           {!department.isJoined ? (
-            <Button className="flex-1" size="sm" onClick={() => onJoin?.(department.id)}>
+            <Button className="w-full sm:flex-1" size="sm" onClick={() => onJoin?.(department.id)}>
               <Users className="w-3 h-3 mr-1" />
               Join
             </Button>
           ) : (
-            <Button className="flex-1 gap-2 bg-transparent" variant="outline" size="sm" className="bg-transparent">
+            <Button className="w-full sm:flex-1 gap-2 bg-transparent" variant="outline" size="sm">
               <Users className="w-3 h-3" />
               Joined
             </Button>
           )}
-          <Button variant="ghost" size="sm" onClick={() => onViewDetails?.(department.id)}>
+          <Button variant="ghost" size="sm" onClick={() => onViewDetails?.(department.id)} className="w-full sm:w-auto">
             <Settings className="w-4 h-4" />
           </Button>
         </div>

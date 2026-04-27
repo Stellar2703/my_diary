@@ -48,7 +48,7 @@ export function DepartmentsList() {
           description: d.description || "",
           members: d.member_count || 0,
           posts: d.post_count || 0,
-          avatar: d.avatar || "🏢",
+          avatar: d.avatar || "",
           location: d.location || "",
           isJoined: d.is_member || false,
         })).filter((d: any) => d.id)) // Filter out any invalid departments

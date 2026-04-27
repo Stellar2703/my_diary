@@ -15,11 +15,13 @@ import { departmentsApi } from "@/lib/api"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
 import { ProtectedRoute } from "@/components/ProtectedRoute"
+import { DepartmentAvatar } from "@/components/department-avatar"
+import { DepartmentSettingsDialog } from "@/components/department-settings-dialog"
 
 interface Department {
   id: number
   name: string
-  type: string
+  type: "college" | "government" | "corporate" | "community"
   description?: string
   avatar: string
   location?: string
@@ -167,11 +169,11 @@ function DepartmentViewContent() {
     )
   }
 
-  const isCreator = user?.id === department.created_by
+  const isCreator = String(user?.id) === String(department.created_by)
   const isMember = department.isJoined || isCreator
 
   return (
-    <div className="container mx-auto py-8 max-w-5xl space-y-6">
+    <div className="container mx-auto max-w-5xl space-y-6 px-4 py-4 sm:px-6 sm:py-8">
       {/* Back Button */}
       <Button variant="ghost" onClick={() => router.push("/departments")} className="gap-2">
         <ArrowLeft className="w-4 h-4" />
@@ -180,16 +182,19 @@ function DepartmentViewContent() {
 
       {/* Department Header */}
       <Card>
-        <CardHeader>
-          <div className="flex flex-col md:flex-row gap-6 items-start">
-            <div className="w-24 h-24 flex items-center justify-center text-6xl bg-primary/10 rounded-lg">
-              {department.avatar}
-            </div>
+        <CardHeader className="p-4 sm:p-6">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:gap-6">
+            <DepartmentAvatar
+              avatar={department.avatar}
+              name={department.name}
+              type={department.type || "community"}
+              className="h-24 w-24 shrink-0 sm:h-28 sm:w-28"
+            />
 
             <div className="flex-1 space-y-3">
-              <div className="flex items-start justify-between">
-                <div>
-                  <h1 className="text-3xl font-bold">{department.name}</h1>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <h1 className="text-2xl font-bold sm:text-3xl break-words">{department.name}</h1>
                   <Badge variant="secondary" className="mt-2">
                     {department.type}
                   </Badge>
@@ -201,17 +206,31 @@ function DepartmentViewContent() {
                 </div>
 
                 {!isMember && (
-                  <Button onClick={handleJoin} className="gap-2">
+                  <Button onClick={handleJoin} className="gap-2 w-full sm:w-auto">
                     <UserPlus className="w-4 h-4" />
                     Join Department
                   </Button>
                 )}
 
                 {isMember && !isCreator && (
-                  <Button onClick={handleLeave} variant="destructive" className="gap-2">
+                  <Button onClick={handleLeave} variant="destructive" className="gap-2 w-full sm:w-auto">
                     <LogOut className="w-4 h-4" />
                     Leave Department
                   </Button>
+                )}
+
+                {isCreator && (
+                  <DepartmentSettingsDialog
+                    department={{
+                      id: departmentId,
+                      name: department.name,
+                      type: department.type,
+                      description: department.description,
+                      avatar: department.avatar,
+                    }}
+                    isAdmin={isCreator}
+                    onUpdate={loadDepartment}
+                  />
                 )}
               </div>
 
@@ -241,7 +260,7 @@ function DepartmentViewContent() {
       {/* Content Tabs */}
       {isMember ? (
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="w-full">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="posts" className="flex-1">
               <FileText className="w-4 h-4 mr-2" />
               Posts

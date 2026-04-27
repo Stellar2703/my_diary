@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -11,6 +11,8 @@ import { postsApi } from "@/lib/api"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
 import { Badge } from "@/components/ui/badge"
+import { SharePostDialog } from "./share-post-dialog"
+import { PostDetailsModal } from "./post-details-modal"
 
 interface Post {
   id: string | number
@@ -22,6 +24,8 @@ interface Post {
   area?: string
   state: string
   country: string
+  latitude?: number | null
+  longitude?: number | null
   post_date: string
   department_name?: string
   content: string
@@ -42,8 +46,12 @@ interface PostFeedProps {
 export function PostFeed({ departmentId }: PostFeedProps = {}) {
   const { user } = useAuth()
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const [posts, setPosts] = useState<Post[]>([])
   const [expandedPostId, setExpandedPostId] = useState<string | null>(null)
+  const [sharePostId, setSharePostId] = useState<string | number | null>(null)
+  const [modalPostId, setModalPostId] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [page, setPage] = useState(1)
 
@@ -51,6 +59,13 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
   useEffect(() => {
     loadPosts()
   }, [page, departmentId])
+
+  useEffect(() => {
+    const postIdFromUrl = searchParams.get("postId")
+    if (postIdFromUrl) {
+      setModalPostId(postIdFromUrl)
+    }
+  }, [searchParams])
 
   const loadPosts = async () => {
     setIsLoading(true)
@@ -96,29 +111,6 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
     }
   }
 
-  const handleShare = async (postId: string | number) => {
-    try {
-      const response = await postsApi.toggleShare(postId)
-      if (response.success) {
-        // Update local state
-        setPosts(posts.map(post => 
-          post.id === postId 
-            ? { 
-                ...post, 
-                isSharedByUser: response.data?.shared,
-                shares_count: response.data?.shared 
-                  ? post.shares_count + 1 
-                  : Math.max(0, post.shares_count - 1)
-              }
-            : post
-        ))
-        toast.success(response.data?.shared ? "Post shared!" : "Share removed")
-      }
-    } catch (error) {
-      toast.error("Failed to share post")
-    }
-  }
-
   const getRelativeDate = (dateString: string) => {
     if (!dateString) return "Just now"
     
@@ -139,6 +131,19 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
     } catch {
       return "Just now"
     }
+  }
+
+  const getLocationLabel = (post: Post) => {
+    const locationParts = [post.area, post.city, post.state, post.country].filter(Boolean)
+    if (locationParts.length > 0) {
+      return locationParts.join(", ")
+    }
+
+    if (typeof post.latitude === "number" && typeof post.longitude === "number") {
+      return `${post.latitude.toFixed(5)}, ${post.longitude.toFixed(5)}`
+    }
+
+    return "Location unavailable"
   }
 
   if (isLoading && posts.length === 0) {
@@ -198,7 +203,7 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
 
                 {/* Location & Department */}
                 <div className="flex flex-wrap gap-2 items-center text-xs text-muted-foreground mb-3">
-                  <span>📍 {post.area ? `${post.area}, ` : ''}{post.city}, {post.state}</span>
+                  <span>📍 {getLocationLabel(post)}</span>
                   {post.department_name && <span>🏢 {post.department_name}</span>}
                   {post.isAlert && (
                     <Badge variant="destructive" className="gap-1 text-xs">
@@ -245,7 +250,7 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
                 </div>
 
                 {/* Action Buttons */}
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {/* Only show like/share buttons if not own post */}
                   {user?.id !== post.user_id && (
                     <>
@@ -260,11 +265,11 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
                       </Button>
                       <Button
                         variant="ghost"
-                        className={`gap-2 bg-transparent ${post.isSharedByUser ? "text-primary" : "text-muted-foreground hover:text-primary"}`}
+                        className="gap-2 bg-transparent text-muted-foreground hover:text-primary"
                         size="sm"
-                        onClick={() => handleShare(post.id)}
+                        onClick={() => setSharePostId(post.id)}
                       >
-                        <Share2 className={`w-4 h-4 ${post.isSharedByUser ? "fill-current" : ""}`} />
+                        <Share2 className="w-4 h-4" />
                         <span className="hidden sm:inline text-xs">Share</span>
                       </Button>
                     </>
@@ -330,6 +335,31 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
           ))
         )}
       </div>
+
+      {sharePostId !== null && (
+        <SharePostDialog
+          isOpen={sharePostId !== null}
+          onOpenChange={(open) => {
+            if (!open) setSharePostId(null)
+          }}
+          postId={sharePostId}
+          onShared={loadPosts}
+        />
+      )}
+
+      {modalPostId && (
+        <PostDetailsModal
+          isOpen={!!modalPostId}
+          onClose={() => {
+            setModalPostId(null)
+            const params = new URLSearchParams(searchParams.toString())
+            params.delete("postId")
+            const query = params.toString()
+            router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+          }}
+          postId={modalPostId}
+        />
+      )}
     </>
   )
 }

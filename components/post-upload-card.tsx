@@ -7,8 +7,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ImageIcon, Video, Volume2, MapPin, X, AlertCircle } from "lucide-react"
-import { postsApi, userApi, departmentsApi } from "@/lib/api"
+import { ImageIcon, Video, Volume2, MapPin, X, AlertCircle, RefreshCw } from "lucide-react"
+import { postsApi, departmentsApi } from "@/lib/api"
 import { toast } from "sonner"
 import { Checkbox } from "@/components/ui/checkbox"
 
@@ -16,25 +16,33 @@ interface PostUploadCardProps {
   defaultDepartmentId?: string
 }
 
+interface DetectedLocation {
+  latitude: number
+  longitude: number
+  city: string
+  state: string
+  country: string
+}
+
 export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}) {
   const [content, setContent] = useState("")
   const [mediaType, setMediaType] = useState<"photo" | "video" | "audio" | null>(null)
   const [mediaFile, setMediaFile] = useState<File | null>(null)
-  const [location, setLocation] = useState("")
-  const [city, setCity] = useState("")
-  const [state, setState] = useState("")
-  const [country, setCountry] = useState("India")
+  const [extraLocation, setExtraLocation] = useState("")
+  const [detectedLocation, setDetectedLocation] = useState<DetectedLocation | null>(null)
+  const [locationStatus, setLocationStatus] = useState("Detecting your current location...")
+  const [isDetectingLocation, setIsDetectingLocation] = useState(false)
+  const [locationError, setLocationError] = useState("")
   const [selectedDepartment, setSelectedDepartment] = useState(defaultDepartmentId || "")
   const [isAlert, setIsAlert] = useState(false)
   const [isPosting, setIsPosting] = useState(false)
-  const [previousLocations, setPreviousLocations] = useState<any[]>([])
   const [departments, setDepartments] = useState<any[]>([])
   
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Load previous locations and departments
+  // Load departments and detect the user's current location
   useEffect(() => {
-    loadPreviousLocations()
+    detectCurrentLocation()
     loadDepartments()
   }, [])
 
@@ -45,15 +53,93 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
     }
   }, [defaultDepartmentId])
 
-  const loadPreviousLocations = async () => {
+  const normalizeLocationText = (value: string) => value.trim().replace(/\s+/g, " ")
+
+  const reverseGeocode = async (latitude: number, longitude: number) => {
     try {
-      const response = await userApi.getLocations()
-      if (response.success && response.data) {
-        setPreviousLocations(Array.isArray(response.data) ? response.data : [])
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}&addressdetails=1`,
+        {
+          headers: {
+            Accept: "application/json",
+          },
+        }
+      )
+
+      if (!response.ok) {
+        throw new Error("Failed to reverse geocode location")
+      }
+
+      const data = await response.json()
+      const address = data?.address || {}
+
+      const city = address.city || address.town || address.village || address.municipality || address.county || address.suburb || address.city_district || ""
+      const state = address.state || address.region || address.state_district || address.province || address.county || ""
+      const country = address.country || ""
+
+      return {
+        city: normalizeLocationText(city),
+        state: normalizeLocationText(state),
+        country: normalizeLocationText(country),
       }
     } catch (error) {
-      
+      return {
+        city: "",
+        state: "",
+        country: "",
+      }
     }
+  }
+
+  const detectCurrentLocation = () => {
+    setIsDetectingLocation(true)
+    setLocationError("")
+    setLocationStatus("Detecting your current location...")
+
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setLocationError("This browser does not support automatic location detection.")
+      setLocationStatus("Location detection unavailable")
+      setIsDetectingLocation(false)
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const latitude = position.coords.latitude
+        const longitude = position.coords.longitude
+        const resolvedLocation = await reverseGeocode(latitude, longitude)
+
+        setDetectedLocation({
+          latitude,
+          longitude,
+          city: resolvedLocation.city,
+          state: resolvedLocation.state,
+          country: resolvedLocation.country,
+        })
+
+        const detectedParts = [resolvedLocation.city, resolvedLocation.state, resolvedLocation.country].filter(Boolean)
+        setLocationStatus(
+          detectedParts.length > 0
+            ? `Using ${detectedParts.join(", ")}`
+            : `Using current coordinates (${latitude.toFixed(5)}, ${longitude.toFixed(5)})`
+        )
+        setIsDetectingLocation(false)
+      },
+      (error) => {
+        setLocationError(
+          error.code === error.PERMISSION_DENIED
+            ? "Location access is required so posts are tagged automatically and cannot be entered manually."
+            : "Unable to detect your location right now. Please enable location services and try again."
+        )
+        setLocationStatus("Location detection failed")
+        setIsDetectingLocation(false)
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 12000,
+        maximumAge: 30000,
+      }
+    )
   }
 
   const loadDepartments = async () => {
@@ -88,8 +174,8 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
       return
     }
 
-    if (!city || !state) {
-      toast.error("Please provide at least city and state")
+    if (!detectedLocation) {
+      toast.error("Waiting for automatic location detection. Please allow location access.")
       return
     }
 
@@ -107,10 +193,14 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
         formData.append("mediaType", mediaType)
       }
       
-      formData.append("location", location)
-      formData.append("city", city)
-      formData.append("state", state)
-      formData.append("country", country)
+      if (extraLocation) {
+        formData.append("area", extraLocation)
+      }
+      formData.append("city", detectedLocation.city)
+      formData.append("state", detectedLocation.state)
+      formData.append("country", detectedLocation.country)
+      formData.append("latitude", String(detectedLocation.latitude))
+      formData.append("longitude", String(detectedLocation.longitude))
       
       if (selectedDepartment) {
         formData.append("departmentId", selectedDepartment)
@@ -127,10 +217,7 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
         setContent("")
         setMediaFile(null)
         setMediaType(null)
-        setLocation("")
-        setCity("")
-        setState("")
-        setCountry("India")
+        setExtraLocation("")
         setSelectedDepartment(defaultDepartmentId || "")
         setIsAlert(false)
         if (fileInputRef.current) {
@@ -179,7 +266,7 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
             className="hidden"
           />
           
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <Button
               variant={mediaType === "photo" ? "default" : "outline"}
               onClick={() => handleMediaSelect("photo")}
@@ -230,36 +317,54 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
         </div>
 
         {/* Location */}
-        <div className="space-y-2">
-          <Label className="flex items-center gap-2">
-            <MapPin className="w-4 h-4" />
-            Location
-          </Label>
-          
-          <div className="grid grid-cols-2 gap-2">
+        <div className="space-y-3 rounded-lg border bg-muted/30 p-3 sm:p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <Label className="flex items-center gap-2">
+              <MapPin className="w-4 h-4" />
+              Automatic Location
+            </Label>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-2 bg-transparent"
+              onClick={detectCurrentLocation}
+              disabled={isDetectingLocation}
+            >
+              <RefreshCw className={`w-4 h-4 ${isDetectingLocation ? "animate-spin" : ""}`} />
+              {isDetectingLocation ? "Detecting..." : "Refresh location"}
+            </Button>
+          </div>
+
+          <div className="rounded-md border bg-background px-3 py-2 text-sm">
+            {locationError ? (
+              <div className="space-y-2 text-destructive">
+                <p>{locationError}</p>
+                <p className="text-xs text-muted-foreground">
+                  Phones will use GPS when available. Laptops use the browser's location services, which usually rely on Wi-Fi or network positioning.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <p className="font-medium">{locationStatus}</p>
+                {detectedLocation && (
+                  <p className="text-xs text-muted-foreground">
+                    {detectedLocation.latitude.toFixed(5)}, {detectedLocation.longitude.toFixed(5)}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="extra-location">Extra location detail (optional)</Label>
             <Input
-              placeholder="City *"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
-            />
-            <Input
-              placeholder="State *"
-              value={state}
-              onChange={(e) => setState(e.target.value)}
+              id="extra-location"
+              placeholder="Building, block, landmark, or room"
+              value={extraLocation}
+              onChange={(e) => setExtraLocation(e.target.value)}
             />
           </div>
-          
-          <Input
-            placeholder="Specific location (optional)"
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-          />
-
-          {previousLocations.length > 0 && (
-            <div className="text-xs text-muted-foreground">
-              Previous: {previousLocations.slice(0, 3).map(loc => `${loc.city}, ${loc.state}`).join(" • ")}
-            </div>
-          )}
         </div>
 
         {/* Alert checkbox - always visible when inside a department page */}
@@ -331,9 +436,9 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
         <Button
           className="w-full"
           onClick={handlePost}
-          disabled={isPosting}
+          disabled={isPosting || isDetectingLocation || !detectedLocation}
         >
-          {isPosting ? "Posting..." : "Post"}
+          {isPosting ? "Posting..." : detectedLocation ? "Post" : "Detect location first"}
         </Button>
       </CardContent>
     </Card>

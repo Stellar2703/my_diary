@@ -3,7 +3,7 @@
 import type React from "react"
 import { useState, useEffect } from "react"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -14,11 +14,11 @@ import { userApi } from "@/lib/api"
 import { UserSettingsDialog } from "./user-settings-dialog"
 
 interface Notification {
-  id: number
+  id: string
   type: string
   content: string
-  post_id: number
-  from_user_id: number
+  post_id?: string
+  from_user_id?: string
   from_user_name?: string
   from_user_username?: string
   is_read: boolean
@@ -27,6 +27,7 @@ interface Notification {
 
 export function Navbar() {
   const pathname = usePathname()
+  const router = useRouter()
   const { isAuthenticated, logout, user } = useAuth()
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
@@ -57,7 +58,7 @@ export function Navbar() {
     }
   }
 
-  const markAsRead = async (id: number) => {
+  const markAsRead = async (id: string) => {
     try {
       await userApi.markNotificationRead(id)
       loadNotifications()
@@ -81,6 +82,14 @@ export function Navbar() {
       window.scrollTo({ top: 0, behavior: "smooth" })
     } else {
       window.location.href = "/home"
+    }
+  }
+
+  const handleNotificationClick = async (notif: Notification) => {
+    await markAsRead(notif.id)
+
+    if (notif.post_id) {
+      router.push(`/home?postId=${notif.post_id}`)
     }
   }
 
@@ -151,12 +160,13 @@ export function Navbar() {
                           className={`p-4 hover:bg-muted/50 cursor-pointer transition-colors ${
                             !notif.is_read ? "bg-primary/5" : ""
                           }`}
-                          onClick={() => markAsRead(notif.id)}
+                          onClick={() => handleNotificationClick(notif)}
                         >
                           <div className="flex items-start gap-3">
                             <div className="mt-1">
                               {notif.type === "like" && <Heart className="w-4 h-4 text-destructive" />}
                               {notif.type === "comment" && <MessageCircle className="w-4 h-4 text-primary" />}
+                              {notif.type === "share" && <Users className="w-4 h-4 text-primary" />}
                             </div>
                             <div className="flex-1 space-y-1">
                               <p className="text-sm">

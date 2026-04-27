@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { AlertCircle, Upload, X } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { DepartmentPhotoTemplate } from "./department-avatar"
 
 interface CreateDepartmentDialogProps {
   isOpen: boolean
@@ -102,7 +103,7 @@ export function CreateDepartmentDialog({ isOpen, onClose, onCreate }: CreateDepa
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent>
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Create New Department / Page</DialogTitle>
         </DialogHeader>
@@ -111,17 +112,17 @@ export function CreateDepartmentDialog({ isOpen, onClose, onCreate }: CreateDepa
           {/* Avatar Upload */}
           <div className="space-y-2">
             <Label>Department Avatar (Optional)</Label>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
               <Avatar className="w-20 h-20">
                 {avatarPreview ? (
                   <AvatarImage src={avatarPreview} alt="Department avatar" />
                 ) : null}
-                <AvatarFallback className="bg-primary text-primary-foreground text-2xl">
-                  📁
+                <AvatarFallback className="bg-transparent p-0">
+                  <DepartmentPhotoTemplate name={formData.name || "New Department"} type={formData.type} />
                 </AvatarFallback>
               </Avatar>
-              <div className="flex flex-col gap-2">
-                <div className="flex gap-2">
+              <div className="flex flex-col gap-2 flex-1 min-w-0">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     type="button"
                     variant="outline"
@@ -218,7 +219,7 @@ export function CreateDepartmentDialog({ isOpen, onClose, onCreate }: CreateDepa
             />
           </div>
 
-          <DialogFooter className="gap-2">
+          <DialogFooter className="gap-2 flex-col sm:flex-row">
             <Button type="button" variant="outline" className="bg-transparent" onClick={handleClose}>
               Cancel
             </Button>

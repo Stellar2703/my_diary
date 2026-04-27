@@ -17,11 +17,13 @@ import { Settings } from "lucide-react"
 import { toast } from "sonner"
 import { departmentsApi } from "@/lib/api"
 import { AvatarUpload } from "./avatar-upload"
+import { DepartmentPhotoTemplate } from "./department-avatar"
 
 interface DepartmentSettingsDialogProps {
   department: {
     id: string
     name: string
+    type: "college" | "government" | "corporate" | "community"
     description?: string
     avatar?: string
   }
@@ -87,12 +89,12 @@ export function DepartmentSettingsDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2">
+        <Button variant="outline" size="sm" className="gap-2 w-full sm:w-auto">
           <Settings className="w-4 h-4" />
           Settings
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Department Settings</DialogTitle>
           <DialogDescription>
@@ -110,6 +112,7 @@ export function DepartmentSettingsDialog({
               departmentId={department.id}
               onSuccess={handleAvatarSuccess}
               size="xl"
+              fallbackContent={<DepartmentPhotoTemplate name={department.name} type={department.type} />}
             />
           </div>
 

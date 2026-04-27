@@ -8,6 +8,7 @@ import { CommentSection } from "./comment-section"
 import { useState, useEffect } from "react"
 import { postsApi } from "@/lib/api"
 import { toast } from "sonner"
+import { SharePostDialog } from "./share-post-dialog"
 
 interface PostDetailsModalProps {
   isOpen: boolean
@@ -38,6 +39,7 @@ interface PostData {
 export function PostDetailsModal({ isOpen, onClose, postId }: PostDetailsModalProps) {
   const [post, setPost] = useState<PostData | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false)
 
   // Load post data
   useEffect(() => {
@@ -86,17 +88,8 @@ export function PostDetailsModal({ isOpen, onClose, postId }: PostDetailsModalPr
     }
   }
 
-  const handleShare = async () => {
-    if (!post) return
-    try {
-      const response = await postsApi.share(post.id)
-      if (response.success) {
-        setPost({ ...post, isSharedByUser: !post.isSharedByUser, shares_count: post.isSharedByUser ? post.shares_count - 1 : post.shares_count + 1 })
-        toast.success(post.isSharedByUser ? 'Share removed' : 'Post shared successfully')
-      }
-    } catch (error) {
-      toast.error('Failed to share post')
-    }
+  const handleShare = () => {
+    setIsShareDialogOpen(true)
   }
 
   const handleDownload = () => {
@@ -234,6 +227,15 @@ export function PostDetailsModal({ isOpen, onClose, postId }: PostDetailsModalPr
             </div>
           </div>
         </div>
+
+        {post && (
+          <SharePostDialog
+            isOpen={isShareDialogOpen}
+            onOpenChange={setIsShareDialogOpen}
+            postId={post.id}
+            onShared={loadPost}
+          />
+        )}
       </DialogContent>
     </Dialog>
   )

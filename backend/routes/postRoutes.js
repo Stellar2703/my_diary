@@ -7,7 +7,8 @@ import {
   updatePost,
   deletePost,
   toggleLike,
-  toggleShare
+  toggleShare,
+  sharePostToUser
 } from '../controllers/postController.js';
 import {
   editPost,
@@ -45,6 +46,7 @@ router.patch('/:id/edit', authenticate, editPost);
 router.delete('/:id', authenticate, deletePost);
 router.post('/:id/like', authenticate, toggleLike);
 router.post('/:id/share', authenticate, toggleShare);
+router.post('/:id/share-user', authenticate, sharePostToUser);
 router.post('/:id/save', authenticate, toggleSavePost);
 router.post('/:id/pin', authenticate, togglePinPost);
 router.get('/:id/history', getPostEditHistory);

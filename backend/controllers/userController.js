@@ -26,6 +26,67 @@ export const getUserLocations = async (req, res) => {
   }
 };
 
+// Get share recipients (searchable user list)
+export const getShareRecipients = async (req, res) => {
+  try {
+    const currentUserId = req.user.id;
+    const { query = '', page = 1, limit = 20 } = req.query;
+
+    const pageNum = parseInt(page);
+    const limitNum = Math.min(parseInt(limit), 50);
+    const skip = (pageNum - 1) * limitNum;
+
+    const searchQuery = {
+      _id: { $ne: currentUserId },
+      isActive: true,
+      ...(query
+        ? {
+            $or: [
+              { name: new RegExp(query, 'i') },
+              { username: new RegExp(query, 'i') }
+            ]
+          }
+        : {})
+    };
+
+    const [users, total] = await Promise.all([
+      User.find(searchQuery)
+        .select('name username profileAvatar')
+        .sort({ name: 1 })
+        .skip(skip)
+        .limit(limitNum)
+        .lean(),
+      User.countDocuments(searchQuery)
+    ]);
+
+    const recipients = users.map(u => ({
+      id: u._id.toString(),
+      name: u.name,
+      username: u.username,
+      avatar: u.profileAvatar
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        recipients,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          totalPages: Math.ceil(total / limitNum)
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch share recipients',
+      error: error.message
+    });
+  }
+};
+
 // Get notifications
 export const getNotifications = async (req, res) => {
   try {
@@ -52,6 +113,8 @@ export const getNotifications = async (req, res) => {
     const enrichedNotifications = notifications.map(n => ({
       ...n,
       id: n._id.toString(),
+      post_id: n.postId?.toString(),
+      department_id: n.departmentId?.toString(),
       is_read: n.isRead,
       created_at: n.createdAt,
       from_user_name: n.fromUserId?.name,

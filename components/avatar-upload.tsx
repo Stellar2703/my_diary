@@ -6,6 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Camera, Upload, X } from "lucide-react"
 import { toast } from "sonner"
 import { authApi, departmentsApi } from "@/lib/api"
+import { DepartmentPhotoTemplate } from "./department-avatar"
 
 interface AvatarUploadProps {
   currentAvatar?: string
@@ -14,6 +15,7 @@ interface AvatarUploadProps {
   departmentId?: string
   onSuccess?: (avatarUrl: string) => void
   size?: "sm" | "md" | "lg" | "xl"
+  fallbackContent?: React.ReactNode
 }
 
 export function AvatarUpload({
@@ -22,7 +24,8 @@ export function AvatarUpload({
   type,
   departmentId,
   onSuccess,
-  size = "lg"
+  size = "lg",
+  fallbackContent,
 }: AvatarUploadProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -35,6 +38,16 @@ export function AvatarUpload({
     lg: "w-32 h-32",
     xl: "w-40 h-40"
   }
+
+  const normalizeAvatarUrl = (avatar?: string) => {
+    if (!avatar) return null
+    if (avatar.startsWith("http")) return avatar
+    if (avatar.startsWith("/")) return `http://localhost:5000${avatar}`
+    if (avatar.startsWith("uploads/")) return `http://localhost:5000/${avatar}`
+    return `http://localhost:5000/uploads/${avatar}`
+  }
+
+  const isImageAvatar = (avatar?: string) => !!avatar && /(\.|^)(jpg|jpeg|png|gif|webp|svg)$/i.test(avatar)
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -104,19 +117,23 @@ export function AvatarUpload({
     }
   }
 
-  const displayAvatar = previewUrl || (currentAvatar?.startsWith('/') 
-    ? `http://localhost:5000${currentAvatar}` 
-    : currentAvatar)
+  const displayAvatar = previewUrl || normalizeAvatarUrl(currentAvatar)
 
   return (
     <div className="flex flex-col items-center gap-4">
       <div className="relative">
         <Avatar className={sizeClasses[size]}>
-          {displayAvatar ? (
+          {displayAvatar && (!currentAvatar || isImageAvatar(currentAvatar) || previewUrl) ? (
             <AvatarImage src={displayAvatar} alt="Avatar" />
           ) : null}
-          <AvatarFallback className="bg-primary text-primary-foreground text-2xl">
-            {fallbackText}
+          <AvatarFallback className={type === "department" ? "bg-transparent p-0" : "bg-primary text-primary-foreground text-2xl"}>
+            {type === "department" ? (
+              fallbackContent || (
+                <DepartmentPhotoTemplate name={fallbackText} type="community" />
+              )
+            ) : (
+              fallbackText
+            )}
           </AvatarFallback>
         </Avatar>
         

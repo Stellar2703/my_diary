@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^Set-Location 'E:\\\\VSCode\\\\Projects\\\\peekhour'; node --check backend/routes/postRoutes\\.js$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}
