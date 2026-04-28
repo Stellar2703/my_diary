@@ -4,6 +4,7 @@ import type React from "react"
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { cn } from "@/lib/utils"
+import { getMediaUrl } from "@/lib/api"
 import { ImageIcon } from "lucide-react"
 
 type DepartmentType = "college" | "government" | "corporate" | "community"
@@ -25,9 +26,7 @@ const typeLabels: Record<DepartmentType, string> = {
 function normalizeAvatarUrl(avatar?: string) {
   if (!avatar) return null
   if (avatar.startsWith("http")) return avatar
-  if (avatar.startsWith("/")) return `http://localhost:5000${avatar}`
-  if (avatar.startsWith("uploads/")) return `http://localhost:5000/${avatar}`
-  return `http://localhost:5000/uploads/${avatar}`
+  return getMediaUrl(avatar)
 }
 
 function isImageAvatar(avatar?: string) {

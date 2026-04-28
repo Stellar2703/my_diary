@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Card } from "@/components/ui/card"
 import { formatDistanceToNow } from "date-fns"
 import { Bold, Italic, Type } from "lucide-react"
-import { commentsApi } from "@/lib/api"
+import { commentsApi, getMediaUrl } from "@/lib/api"
 import { toast } from "sonner"
 
 interface Comment {
@@ -206,7 +206,7 @@ export function CommentSection({ postId }: CommentSectionProps) {
                 <Avatar className="w-8 h-8 flex-shrink-0">
                   {comment.author_avatar?.startsWith('/') ? (
                     <AvatarImage 
-                      src={`http://localhost:5000${comment.author_avatar}`} 
+                      src={getMediaUrl(comment.author_avatar)} 
                       alt={comment.author_name} 
                     />
                   ) : null}
@@ -288,7 +288,7 @@ export function CommentSection({ postId }: CommentSectionProps) {
                           <Avatar className="w-6 h-6 flex-shrink-0">
                             {reply.author_avatar?.startsWith('/') ? (
                               <AvatarImage 
-                                src={`http://localhost:5000${reply.author_avatar}`} 
+                                src={getMediaUrl(reply.author_avatar)} 
                                 alt={reply.author_name} 
                               />
                             ) : null}

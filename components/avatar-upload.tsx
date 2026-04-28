@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Camera, Upload, X } from "lucide-react"
 import { toast } from "sonner"
-import { authApi, departmentsApi } from "@/lib/api"
+import { authApi, departmentsApi, getMediaUrl } from "@/lib/api"
 import { DepartmentPhotoTemplate } from "./department-avatar"
 
 interface AvatarUploadProps {
@@ -42,9 +42,7 @@ export function AvatarUpload({
   const normalizeAvatarUrl = (avatar?: string) => {
     if (!avatar) return null
     if (avatar.startsWith("http")) return avatar
-    if (avatar.startsWith("/")) return `http://localhost:5000${avatar}`
-    if (avatar.startsWith("uploads/")) return `http://localhost:5000/${avatar}`
-    return `http://localhost:5000/uploads/${avatar}`
+    return getMediaUrl(avatar)
   }
 
   const isImageAvatar = (avatar?: string) => !!avatar && /(\.|^)(jpg|jpeg|png|gif|webp|svg)$/i.test(avatar)

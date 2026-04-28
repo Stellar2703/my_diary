@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { MessageCircle, Share2, Download, ZoomIn, Zap, ChevronDown, ChevronUp, AlertCircle } from "lucide-react"
 import { CommentSection } from "./comment-section"
-import { postsApi } from "@/lib/api"
+import { postsApi, getMediaUrl } from "@/lib/api"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
 import { Badge } from "@/components/ui/badge"
@@ -185,7 +185,7 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
                   >
                     <Avatar>
                       {post.author_avatar?.startsWith('/') ? (
-                        <AvatarImage src={`http://localhost:5000${post.author_avatar}`} alt={post.author_name} />
+                        <AvatarImage src={getMediaUrl(post.author_avatar)} alt={post.author_name} />
                       ) : null}
                       <AvatarFallback className="bg-primary text-primary-foreground">
                         {post.author_avatar && !post.author_avatar.startsWith('/') 
@@ -221,21 +221,21 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
                   <div className="relative bg-muted rounded-lg overflow-hidden mb-4 aspect-video flex items-center justify-center">
                     {post.media_type === "photo" && (
                       <img
-                        src={`http://localhost:5000${post.media_url}`}
+                        src={getMediaUrl(post.media_url)}
                         alt="Post media"
                         className="w-full h-full object-cover"
                       />
                     )}
                     {post.media_type === "video" && (
                       <video
-                        src={`http://localhost:5000${post.media_url}`}
+                        src={getMediaUrl(post.media_url)}
                         className="w-full h-full object-cover"
                         controls
                       />
                     )}
                     {post.media_type === "audio" && (
                       <audio
-                        src={`http://localhost:5000${post.media_url}`}
+                        src={getMediaUrl(post.media_url)}
                         className="w-full"
                         controls
                       />
@@ -315,7 +315,7 @@ export function PostFeed({ departmentId }: PostFeedProps = {}) {
                     size="sm"
                     onClick={() => {
                       if (post.media_url) {
-                        window.open(`http://localhost:5000${post.media_url}`, '_blank')
+                        window.open(getMediaUrl(post.media_url), '_blank')
                       }
                     }}
                   >

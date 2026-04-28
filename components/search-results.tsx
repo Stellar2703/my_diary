@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Heart, MessageCircle, Share2, Download, ImageIcon, Video, Volume2 } from "lucide-react"
-import { postsApi } from "@/lib/api"
+import { postsApi, getMediaUrl } from "@/lib/api"
 import { toast } from "sonner"
 
 interface SearchResult {
@@ -89,7 +89,7 @@ export function SearchResults({ filters, hasSearched }: SearchResultsProps) {
           department: post.department_name || "General",
           description: post.content || "",
           mediaType: post.media_type === "video" ? "video" : post.media_type === "audio" ? "audio" : "photo",
-          thumbnail: post.media_url ? `http://localhost:5000${post.media_url}` : "/placeholder.svg",
+          thumbnail: post.media_url ? getMediaUrl(post.media_url) : "/placeholder.svg",
           likes: post.reaction_count || 0,
           comments: post.comment_count || 0,
         })).filter((r: any) => r.id)) // Filter out any results without valid ids)

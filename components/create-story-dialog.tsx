@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { storiesApi } from '@/lib/api';
+import { storiesApi, API_BASE_URL } from '@/lib/api';
 import { useToast } from '@/hooks/use-toast';
 import {
   Dialog,
@@ -93,7 +93,7 @@ export default function CreateStoryDialog({
         formData.append('media', mediaFile);
 
         // Using existing upload endpoint (you may need to create a dedicated one)
-        const uploadResponse = await fetch('http://localhost:5000/api/posts/upload', {
+        const uploadResponse = await fetch(`${API_BASE_URL}/posts/upload`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${localStorage.getItem('token')}`,

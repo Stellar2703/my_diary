@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Search, Share2 } from "lucide-react"
-import { postsApi, userApi } from "@/lib/api"
+import { postsApi, userApi, getMediaUrl } from "@/lib/api"
 import { toast } from "sonner"
 
 interface ShareRecipient {
@@ -27,9 +27,7 @@ interface SharePostDialogProps {
 function getAvatarUrl(avatar?: string) {
   if (!avatar) return null
   if (avatar.startsWith("http")) return avatar
-  if (avatar.startsWith("/")) return `http://localhost:5000${avatar}`
-  if (avatar.startsWith("uploads/")) return `http://localhost:5000/${avatar}`
-  return `http://localhost:5000/uploads/${avatar}`
+  return getMediaUrl(avatar)
 }
 
 export function SharePostDialog({ isOpen, onOpenChange, postId, onShared }: SharePostDialogProps) {

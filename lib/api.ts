@@ -1,5 +1,13 @@
 // API Configuration
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
+
+// Media URL helper
+export const getMediaUrl = (path: string) => {
+  const base = API_BASE_URL.replace('/api', '');
+  if (path.startsWith('/')) return `${base}${path}`;
+  if (path.startsWith('uploads/')) return `${base}/${path}`;
+  return `${base}/uploads/${path}`;
+};
 
 // Token management
 export const getAuthToken = () => {
