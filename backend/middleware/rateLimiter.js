@@ -16,8 +16,8 @@ export const generalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req, res) => {
-    // Skip rate limiting in development
-    if (process.env.NODE_ENV === 'development') {
+    // Skip rate limiting in development or if disabled
+    if (process.env.NODE_ENV === 'development' || process.env.DISABLE_RATE_LIMITER === 'true') {
       return true;
     }
     return false;
@@ -34,7 +34,7 @@ export const authLimiter = rateLimit({
     message: 'Too many authentication attempts, please try again after 15 minutes.'
   },
   skip: (req, res) => {
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === 'development' || process.env.DISABLE_RATE_LIMITER === 'true') {
       return true;
     }
     return false;
@@ -50,7 +50,7 @@ export const uploadLimiter = rateLimit({
     message: 'Too many uploads, please try again later.'
   },
   skip: (req, res) => {
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === 'development' || process.env.DISABLE_RATE_LIMITER === 'true') {
       return true;
     }
     return false;
@@ -66,7 +66,7 @@ export const createLimiter = rateLimit({
     message: 'Too many requests, please try again later.'
   },
   skip: (req, res) => {
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === 'development' || process.env.DISABLE_RATE_LIMITER === 'true') {
       return true;
     }
     return false;
@@ -82,7 +82,7 @@ export const readLimiter = rateLimit({
     message: 'Too many requests, please try again later.'
   },
   skip: (req, res) => {
-    if (process.env.NODE_ENV === 'development') {
+    if (process.env.NODE_ENV === 'development' || process.env.DISABLE_RATE_LIMITER === 'true') {
       return true;
     }
     return false;
@@ -101,8 +101,8 @@ export const userOperationLimiter = (windowMs = 60 * 1000, max = 30) => {
     skip: (req, res) => {
       // Skip if user is not authenticated
       if (!req.user) return true;
-      // Skip in development
-      if (process.env.NODE_ENV === 'development') {
+      // Skip in development or if disabled
+      if (process.env.NODE_ENV === 'development' || process.env.DISABLE_RATE_LIMITER === 'true') {
         return true;
       }
       return false;
