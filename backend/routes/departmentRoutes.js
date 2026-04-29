@@ -3,6 +3,7 @@ import { body } from 'express-validator';
 import {
   createDepartment,
   getDepartments,
+  getJoinedDepartments,
   getDepartmentById,
   joinDepartment,
   leaveDepartment,
@@ -30,6 +31,7 @@ const createDepartmentValidation = [
 // Routes
 router.post('/', authenticate, createDepartmentValidation, validate, createDepartment);
 router.get('/', optionalAuth, getDepartments);
+router.get('/joined', authenticate, getJoinedDepartments);
 router.get('/:id', optionalAuth, getDepartmentById);
 router.get('/:id/posts', authenticate, getDepartmentPosts);
 router.post('/:id/join', authenticate, joinDepartment);

@@ -310,6 +310,12 @@ export const departmentsApi = {
     });
   },
 
+  getJoined: async () => {
+    return apiCall('/departments/joined', {
+      method: 'GET',
+    });
+  },
+
   getById: async (id: string | number) => {
     return apiCall(`/departments/${id}`, {
       method: 'GET',

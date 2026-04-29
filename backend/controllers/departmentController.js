@@ -114,6 +114,58 @@ export const getDepartments = async (req, res) => {
   }
 };
 
+// Get departments joined by current user
+export const getJoinedDepartments = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required'
+      });
+    }
+
+    const userId = req.user.id;
+
+    // Find departments where user is a member
+    const departments = await Department.find({
+      'members.userId': userId,
+      isActive: true
+    })
+      .populate('createdBy', 'name username')
+      .sort({ 'members.joinedAt': -1 })
+      .lean();
+
+    // Enrich departments with additional info
+    const enriched = departments.map(dept => {
+      const member = dept.members.find(m => m.userId.toString() === userId);
+      const memberCount = dept.members?.length || 0;
+      
+      return {
+        ...dept,
+        id: dept._id.toString(),
+        creator_name: dept.createdBy?.name,
+        creator_username: dept.createdBy?.username,
+        member_count: memberCount,
+        post_count: 0, // Could calculate if needed
+        is_member: true,
+        user_role: member?.role || 'member'
+      };
+    });
+
+    res.json({
+      success: true,
+      data: enriched
+    });
+  } catch (error) {
+    
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch joined departments',
+      error: error.message
+    });
+  }
+};
+
 // Get single department
 export const getDepartmentById = async (req, res) => {
   try {

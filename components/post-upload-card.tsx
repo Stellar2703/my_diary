@@ -145,13 +145,9 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
 
   const loadDepartments = async () => {
     try {
-      const response = await departmentsApi.getAll()
+      const response = await departmentsApi.getJoined()
       if (response.success && response.data) {
-        // Filter to only show departments the user has joined
-        const joinedDepartments = Array.isArray(response.data) 
-          ? response.data.filter((dept: any) => dept.is_member)
-          : []
-        setDepartments(joinedDepartments)
+        setDepartments(Array.isArray(response.data) ? response.data : [])
       }
     } catch (error) {
       

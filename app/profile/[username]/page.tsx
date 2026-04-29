@@ -4,12 +4,12 @@ import { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { MapPin, Calendar, Users, FileText, Heart, MessageCircle, Share2 } from "lucide-react"
-import { profileApi, followApi } from "@/lib/api"
+import { profileApi, followApi, getMediaUrl } from "@/lib/api"
 import { toast } from "sonner"
 import { useAuth } from "@/contexts/AuthContext"
 import { PostFeed } from "@/components/post-feed"
@@ -119,7 +119,14 @@ export default function UserProfile() {
         <CardHeader>
           <div className="flex flex-col md:flex-row gap-6 items-start">
             <Avatar className="w-24 h-24">
-              <AvatarFallback className="text-3xl">{profile.profile_avatar}</AvatarFallback>
+              {profile.profile_avatar?.startsWith('/') ? (
+                <AvatarImage src={getMediaUrl(profile.profile_avatar)} alt={profile.name} />
+              ) : null}
+              <AvatarFallback className="text-3xl">
+                {profile.profile_avatar && !profile.profile_avatar.startsWith('/') 
+                  ? profile.profile_avatar 
+                  : profile.name?.charAt(0) || '?'}
+              </AvatarFallback>
             </Avatar>
 
             <div className="flex-1 space-y-3">
