@@ -80,7 +80,34 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // ====== STATIC FILES ======
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
+  setHeaders: (res, path) => {
+    // Set cache control for better performance
+    res.set('Cache-Control', 'public, max-age=31536000'); // 1 year
+    // Allow cross-origin for images
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    // Set content type based on file extension
+    if (path.endsWith('.jpg') || path.endsWith('.jpeg')) {
+      res.set('Content-Type', 'image/jpeg');
+    } else if (path.endsWith('.png')) {
+      res.set('Content-Type', 'image/png');
+    } else if (path.endsWith('.gif')) {
+      res.set('Content-Type', 'image/gif');
+    } else if (path.endsWith('.webp')) {
+      res.set('Content-Type', 'image/webp');
+    } else if (path.endsWith('.mp4')) {
+      res.set('Content-Type', 'video/mp4');
+    } else if (path.endsWith('.webm')) {
+      res.set('Content-Type', 'video/webm');
+    } else if (path.endsWith('.mp3')) {
+      res.set('Content-Type', 'audio/mpeg');
+    } else if (path.endsWith('.wav')) {
+      res.set('Content-Type', 'audio/wav');
+    }
+  }
+}));
 
 // ====== RATE LIMITING ======
 app.use('/api/', generalLimiter);

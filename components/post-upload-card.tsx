@@ -33,6 +33,7 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
   const [locationStatus, setLocationStatus] = useState("Detecting your current location...")
   const [isDetectingLocation, setIsDetectingLocation] = useState(false)
   const [locationError, setLocationError] = useState("")
+  const [postInDepartment, setPostInDepartment] = useState(false)
   const [selectedDepartment, setSelectedDepartment] = useState(defaultDepartmentId || "")
   const [isAlert, setIsAlert] = useState(false)
   const [isPosting, setIsPosting] = useState(false)
@@ -146,7 +147,11 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
     try {
       const response = await departmentsApi.getAll()
       if (response.success && response.data) {
-        setDepartments(Array.isArray(response.data) ? response.data : [])
+        // Filter to only show departments the user has joined
+        const joinedDepartments = Array.isArray(response.data) 
+          ? response.data.filter((dept: any) => dept.is_member)
+          : []
+        setDepartments(joinedDepartments)
       }
     } catch (error) {
       
@@ -202,7 +207,7 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
       formData.append("latitude", String(detectedLocation.latitude))
       formData.append("longitude", String(detectedLocation.longitude))
       
-      if (selectedDepartment) {
+      if (selectedDepartment && postInDepartment) {
         formData.append("departmentId", selectedDepartment)
         if (isAlert) {
           formData.append("isAlert", "true")
@@ -218,6 +223,7 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
         setMediaFile(null)
         setMediaType(null)
         setExtraLocation("")
+        setPostInDepartment(false)
         setSelectedDepartment(defaultDepartmentId || "")
         setIsAlert(false)
         if (fileInputRef.current) {
@@ -390,43 +396,77 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
           </div>
         )}
 
-        {/* Department Selection - only shown on home feed (no defaultDepartmentId) */}
-        {!defaultDepartmentId && departments.length > 0 && (
+        {/* Department Posting Option - only shown on home feed (no defaultDepartmentId) */}
+        {!defaultDepartmentId && (
           <div className="space-y-3">
-            <Label>Department (Optional)</Label>
-            <Select value={selectedDepartment} onValueChange={setSelectedDepartment}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select department" />
-              </SelectTrigger>
-              <SelectContent>
-                {departments.map((dept: any) => (
-                  <SelectItem key={dept.id} value={dept.id.toString()}>
-                    {dept.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex items-center space-x-2">
+              <Checkbox
+                id="post-in-department"
+                checked={postInDepartment}
+                onCheckedChange={(checked) => {
+                  setPostInDepartment(checked as boolean)
+                  if (!checked) {
+                    setSelectedDepartment("")
+                    setIsAlert(false)
+                  }
+                }}
+              />
+              <Label
+                htmlFor="post-in-department"
+                className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+              >
+                Post in department
+              </Label>
+            </div>
 
-            {/* Alert Checkbox - shown when a department is selected on home feed */}
-            {selectedDepartment && (
-              <div className="flex items-center space-x-2 p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-900">
-                <Checkbox
-                  id="alert-checkbox-home"
-                  checked={isAlert}
-                  onCheckedChange={(checked) => setIsAlert(checked as boolean)}
-                />
-                <div className="flex-1">
-                  <label
-                    htmlFor="alert-checkbox-home"
-                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex items-center gap-2"
-                  >
-                    <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-                    <span>Send Alert to All Department Members</span>
-                  </label>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    All members will receive a notification for this post
-                  </p>
-                </div>
+            {/* Department Selection - shown when checkbox is checked */}
+            {postInDepartment && departments.length > 0 && (
+              <div className="space-y-3 ml-6">
+                <Label>Choose department</Label>
+                <Select value={selectedDepartment} onValueChange={setSelectedDepartment}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select department" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {departments.map((dept: any) => (
+                      <SelectItem key={dept.id} value={dept.id.toString()}>
+                        {dept.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                {/* Alert Checkbox - shown when a department is selected */}
+                {selectedDepartment && (
+                  <div className="flex items-center space-x-2 p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-900">
+                    <Checkbox
+                      id="alert-checkbox-home"
+                      checked={isAlert}
+                      onCheckedChange={(checked) => setIsAlert(checked as boolean)}
+                    />
+                    <div className="flex-1">
+                      <label
+                        htmlFor="alert-checkbox-home"
+                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer flex items-center gap-2"
+                      >
+                        <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+                        <span>Send Alert to All Department Members</span>
+                      </label>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        All members will receive a notification for this post
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Message when no joined departments */}
+            {postInDepartment && departments.length === 0 && (
+              <div className="ml-6 p-3 bg-muted rounded-lg">
+                <p className="text-sm text-muted-foreground">
+                  You haven't joined any departments yet. Visit the departments page to join one.
+                </p>
               </div>
             )}
           </div>
