@@ -101,10 +101,22 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
       res.set('Content-Type', 'video/mp4');
     } else if (path.endsWith('.webm')) {
       res.set('Content-Type', 'video/webm');
+    } else if (path.endsWith('.mov')) {
+      res.set('Content-Type', 'video/quicktime');
+    } else if (path.endsWith('.avi')) {
+      res.set('Content-Type', 'video/x-msvideo');
+    } else if (path.endsWith('.mkv')) {
+      res.set('Content-Type', 'video/x-matroska');
     } else if (path.endsWith('.mp3')) {
       res.set('Content-Type', 'audio/mpeg');
     } else if (path.endsWith('.wav')) {
       res.set('Content-Type', 'audio/wav');
+    } else if (path.endsWith('.m4a')) {
+      res.set('Content-Type', 'audio/mp4');
+    } else if (path.endsWith('.ogg')) {
+      res.set('Content-Type', 'audio/ogg');
+    } else if (path.endsWith('.webm')) {
+      res.set('Content-Type', 'audio/webm');
     }
   }
 }));
