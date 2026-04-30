@@ -8,9 +8,11 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { MapPin, Search, Home, Plus, Bell, Settings, LogOut, Users, Heart, MessageCircle, Shield } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { userApi, getMediaUrl } from "@/lib/api"
-// import { userApi } from "@/lib/api"
 import { UserSettingsDialog } from "./user-settings-dialog"
 
 interface Notification {
