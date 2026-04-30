@@ -51,6 +51,7 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
   useEffect(() => {
     if (defaultDepartmentId) {
       setSelectedDepartment(defaultDepartmentId)
+      setPostInDepartment(true)
     }
   }, [defaultDepartmentId])
 
@@ -219,7 +220,7 @@ export function PostUploadCard({ defaultDepartmentId }: PostUploadCardProps = {}
         setMediaFile(null)
         setMediaType(null)
         setExtraLocation("")
-        setPostInDepartment(false)
+        setPostInDepartment(!!defaultDepartmentId)
         setSelectedDepartment(defaultDepartmentId || "")
         setIsAlert(false)
         if (fileInputRef.current) {
