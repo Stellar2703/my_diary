@@ -8,6 +8,7 @@ import {
   togglePostStatus,
   getAdminDepartments,
   toggleDepartmentStatus,
+  impersonateUser,
 } from '../controllers/adminController.js';
 import { authenticate, authorizeAdmin } from '../middleware/auth.js';
 
@@ -26,5 +27,7 @@ router.patch('/posts/:postId/status', togglePostStatus);
 
 router.get('/departments', getAdminDepartments);
 router.patch('/departments/:departmentId/status', toggleDepartmentStatus);
+
+router.post('/impersonate/:userId', impersonateUser);
 
 export default router;

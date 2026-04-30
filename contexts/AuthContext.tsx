@@ -21,10 +21,14 @@ interface AuthContextType {
   user: User | null
   isLoading: boolean
   isAuthenticated: boolean
+  isImpersonating: boolean
+  originalUser: User | null
   login: (username: string, password: string) => Promise<boolean>
   register: (formData: FormData) => Promise<boolean>
   logout: () => void
   updateUser: (user: User) => void
+  startImpersonation: (userData: any, token: string) => void
+  stopImpersonation: () => void
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -32,6 +36,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  const [isImpersonating, setIsImpersonating] = useState(false)
+  const [originalUser, setOriginalUser] = useState<User | null>(null)
   const router = useRouter()
 
   // Check authentication on mount
@@ -146,16 +152,50 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(userData)
   }
 
+  const startImpersonation = (userData: any, token: string) => {
+    // Store current user as original
+    setOriginalUser(user)
+    // Set impersonated user
+    const impersonatedUser: User = {
+      id: String(userData.id),
+      userId: String(userData.id),
+      name: userData.name,
+      username: userData.username,
+      email: userData.email,
+      mobile: userData.mobile || userData.mobileNumber || "",
+      role: userData.role || "user",
+      avatar: userData.avatar,
+      bio: userData.bio,
+    }
+    setUser(impersonatedUser)
+    setIsImpersonating(true)
+    setAuthToken(token)
+    toast.success(`Now impersonating ${userData.name}`)
+  }
+
+  const stopImpersonation = () => {
+    if (originalUser) {
+      setUser(originalUser)
+      setOriginalUser(null)
+      setIsImpersonating(false)
+      toast.success('Stopped impersonation')
+    }
+  }
+
   return (
     <AuthContext.Provider
       value={{
         user,
         isLoading,
         isAuthenticated: !!user,
+        isImpersonating,
+        originalUser,
         login,
         register,
         logout,
         updateUser,
+        startImpersonation,
+        stopImpersonation,
       }}
     >
       {children}

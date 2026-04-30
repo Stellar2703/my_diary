@@ -3,17 +3,19 @@ import jwt from 'jsonwebtoken';
 import User from '../models/User.js';
 
 // Generate JWT Token
-const generateToken = (user) => {
-  return jwt.sign(
-    { 
-      id: user._id.toString(), 
-      username: user.username,
-      email: user.email,
-      role: user.role || 'user'
-    },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRE || '7d' }
-  );
+const generateToken = (user, impersonatedBy = null) => {
+  const payload = { 
+    id: user._id.toString(), 
+    username: user.username,
+    email: user.email,
+    role: user.role || 'user'
+  };
+  
+  if (impersonatedBy) {
+    payload.impersonatedBy = impersonatedBy;
+  }
+  
+  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRE || '7d' });
 };
 
 // Register new user

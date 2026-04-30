@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { AdminRoute } from "@/components/AdminRoute"
 import { adminApi, moderationApi } from "@/lib/api"
+import { useAuth } from "@/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -75,6 +76,7 @@ export default function AdminPage() {
 }
 
 function AdminPageContent() {
+  const { startImpersonation } = useAuth()
   const [isLoading, setIsLoading] = useState(true)
   const [isRefreshing, setIsRefreshing] = useState(false)
 
@@ -205,6 +207,16 @@ function AdminPageContent() {
       loadDashboard()
     } else {
       toast.error(response.message || "Failed to update user status")
+    }
+  }
+
+  const handleImpersonateUser = async (userId: string) => {
+    const response = await adminApi.impersonateUser(userId)
+    if (response.success && response.data) {
+      startImpersonation(response.data.user, response.data.token)
+      toast.success(`Now impersonating ${response.data.user.name}`)
+    } else {
+      toast.error(response.message || "Failed to impersonate user")
     }
   }
 
@@ -347,6 +359,9 @@ function AdminPageContent() {
                             <SelectItem value="admin">Admin</SelectItem>
                           </SelectContent>
                         </Select>
+                        <Button variant="outline" size="sm" onClick={() => handleImpersonateUser(u.id)}>
+                          Impersonate
+                        </Button>
                         <Button variant={u.is_active ? "destructive" : "default"} onClick={() => handleToggleUserStatus(u.id)}>
                           {u.is_active ? "Disable" : "Enable"}
                         </Button>

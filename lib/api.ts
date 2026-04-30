@@ -924,5 +924,11 @@ export const adminApi = {
       method: 'PATCH',
     });
   },
+
+  impersonateUser: async (userId: string) => {
+    return apiCall(`/admin/impersonate/${userId}`, {
+      method: 'POST',
+    });
+  },
 };
 

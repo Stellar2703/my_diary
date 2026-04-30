@@ -6,10 +6,10 @@ import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { MapPin, Search, Home, Plus, Bell, Settings, LogOut, Users, Heart, MessageCircle, Shield } from "lucide-react"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { useAuth } from "@/contexts/AuthContext"
+import { userApi, getMediaUrl } from "@/lib/api"
 import { userApi } from "@/lib/api"
 import { UserSettingsDialog } from "./user-settings-dialog"
 
@@ -28,7 +28,7 @@ interface Notification {
 export function Navbar() {
   const pathname = usePathname()
   const router = useRouter()
-  const { isAuthenticated, logout, user } = useAuth()
+  const { isAuthenticated, logout, user, isImpersonating, stopImpersonation } = useAuth()
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
 
@@ -128,6 +128,61 @@ export function Navbar() {
             <Button variant="ghost" size="icon" className="hidden sm:inline-flex" title="New Post" onClick={handleNewPost}>
               <Plus className="w-5 h-5" />
             </Button>
+            
+            {/* User Menu */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={user?.avatar ? getMediaUrl(user.avatar) : undefined} alt={user?.name} />
+                    <AvatarFallback>{user?.name?.substring(0, 2).toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="w-56" align="end" forceMount>
+                <div className="flex items-center justify-start gap-2 p-2">
+                  <div className="flex flex-col space-y-1 leading-none">
+                    <p className="font-medium">{user?.name}</p>
+                    <p className="w-[200px] truncate text-sm text-muted-foreground">
+                      @{user?.username}
+                    </p>
+                    {isImpersonating && (
+                      <p className="text-xs text-orange-600 font-medium">
+                        Impersonating
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href={`/profile/${user?.username}`}>
+                    <Users className="mr-2 h-4 w-4" />
+                    <span>Profile</span>
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/settings">
+                    <Settings className="mr-2 h-4 w-4" />
+                    <span>Settings</span>
+                  </Link>
+                </DropdownMenuItem>
+                {isImpersonating && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={stopImpersonation}>
+                      <Shield className="mr-2 h-4 w-4" />
+                      <span>Stop Impersonation</span>
+                    </DropdownMenuItem>
+                  </>
+                )}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={logout}>
+                  <LogOut className="mr-2 h-4 w-4" />
+                  <span>Log out</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            
             {/* Notifications Popover */}
             <Popover>
               <PopoverTrigger asChild>

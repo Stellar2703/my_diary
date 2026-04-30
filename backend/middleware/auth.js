@@ -33,7 +33,8 @@ export const authenticate = async (req, res, next) => {
       id: dbUser._id.toString(),
       username: dbUser.username,
       email: dbUser.email,
-      role: dbUser.role || 'user'
+      role: dbUser.role || 'user',
+      impersonatedBy: decoded.impersonatedBy || null
     };
 
     next();
