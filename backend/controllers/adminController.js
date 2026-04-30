@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { User, Post, Comment, Department, Report, Ban, ModerationLog } from '../models/index.js';
+import { generateToken } from './authController.js';
 
 export const getAdminDashboard = async (req, res) => {
   try {
@@ -442,9 +443,6 @@ export const impersonateUser = async (req, res) => {
     if (!targetUser.isActive) {
       return res.status(400).json({ success: false, message: 'Cannot impersonate disabled user' });
     }
-
-    // Import generateToken from authController
-    const { generateToken } = await import('./authController.js');
 
     // Generate token for the target user with impersonation info
     const token = generateToken(targetUser, req.user.id);
